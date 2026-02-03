@@ -1,4 +1,5 @@
-import { execa, type ResultPromise } from 'execa';
+import { execa } from 'execa';
+import { spawn, type ChildProcess } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
 import {
   LLMProvider,
@@ -35,7 +36,7 @@ export class ClaudeCodeProvider implements LLMProvider {
 
   private progressCallback?: ProgressCallback;
   private bugFoundCallback?: BugFoundCallback;
-  private currentProcess?: ResultPromise;
+  private currentProcess?: ChildProcess;
   private unsafeMode = false;
 
   async detect(): Promise<boolean> {
@@ -311,34 +312,45 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
   ): Promise<void> {
     const claudeCommand = getProviderCommand('claude-code');
 
-    // Build command arguments
-    const args = ['--verbose', '-p', prompt];
+    // Build command arguments with proper streaming output format
+    const args = [
+      '-p', prompt,
+      '--output-format', 'stream-json',
+      '--verbose',
+    ];
 
-    // Only add --dangerously-skip-permissions if explicitly enabled
-    // This flag bypasses Claude's safety prompts - use with caution
+    // Auto-approve tools when unsafe mode is enabled
     if (this.unsafeMode) {
-      args.unshift('--dangerously-skip-permissions');
+      args.push('--allowedTools', 'Bash,Read,Edit,Glob,Grep,Write');
     }
 
-    this.currentProcess = execa(
-      claudeCommand,
-      args,
-      {
-        cwd,
-        env: {
-          ...process.env,
-          NO_COLOR: '1',
-        },
-        reject: false,
+    // Use native spawn for proper streaming (execa v9 has buffering issues)
+    this.currentProcess = spawn(claudeCommand, args, {
+      cwd,
+      env: {
+        ...process.env,
+        NO_COLOR: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // Heartbeat to show activity
+    let lastActivity = Date.now();
+    const heartbeat = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - lastActivity) / 1000);
+      if (elapsed > 10) {
+        this.reportProgress(`Analyzing... (${elapsed}s since last update)`);
       }
-    );
+    }, 5000);
 
     // Buffer for accumulating output
     let buffer = '';
 
     // Process streaming output
     this.currentProcess.stdout?.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
+      lastActivity = Date.now();
+      const text = chunk.toString();
+      buffer += text;
 
       // Process complete lines
       const lines = buffer.split('\n');
@@ -350,14 +362,39 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
     });
 
     this.currentProcess.stderr?.on('data', (chunk: Buffer) => {
-      // Log stderr for debugging but don't treat as error
+      lastActivity = Date.now();
       const text = chunk.toString().trim();
-      if (text && !text.includes('Loading')) {
-        // Could log to debug
+      if (text) {
+        // Report stderr activity
+        this.reportProgress(`Claude: ${text.slice(0, 50)}...`);
       }
     });
 
-    await this.currentProcess;
+    // Wait for process to complete
+    await new Promise<void>((resolve, reject) => {
+      // Timeout after 5 minutes
+      const timeout = setTimeout(() => {
+        this.currentProcess?.kill();
+        reject(new Error('Claude analysis timed out after 5 minutes'));
+      }, 300000);
+
+      this.currentProcess?.on('exit', (code) => {
+        clearTimeout(timeout);
+        if (code !== 0 && code !== null) {
+          // Non-zero exit, but don't reject - we may have partial results
+          this.reportProgress(`Claude exited with code ${code}`);
+        }
+        resolve();
+      });
+
+      this.currentProcess?.on('error', (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    // Clean up heartbeat
+    clearInterval(heartbeat);
 
     // Process any remaining buffer
     if (buffer.trim()) {
@@ -378,7 +415,75 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
     }
   ): void {
     const trimmed = line.trim();
+    if (!trimmed) return;
 
+    // Try to parse as JSON (stream-json format)
+    try {
+      const event = JSON.parse(trimmed);
+
+      // Handle different event types from Claude's stream-json format
+      if (event.type === 'system') {
+        // Initialization event
+        this.reportProgress('Claude initialized...');
+      } else if (event.type === 'stream_event') {
+        // Streaming events contain nested event data
+        const innerEvent = event.event;
+        if (innerEvent?.type === 'content_block_delta') {
+          // Text chunk from Claude
+          const text = innerEvent.delta?.text;
+          if (text) {
+            this.processTextContent(text, callbacks);
+          }
+        } else if (innerEvent?.type === 'content_block_start') {
+          // New content block starting
+          if (innerEvent.content_block?.type === 'tool_use') {
+            const toolName = innerEvent.content_block.name || 'tool';
+            this.reportProgress(`Using ${toolName}...`);
+          }
+        }
+      } else if (event.type === 'assistant') {
+        // Complete assistant message - extract text and tool use
+        const content = event.message?.content || [];
+        for (const item of content) {
+          if (item.type === 'text' && item.text) {
+            this.processTextContent(item.text, callbacks);
+          } else if (item.type === 'tool_use') {
+            const toolName = item.name || 'tool';
+            const input = item.input || {};
+            if (toolName === 'Read' && input.file_path) {
+              callbacks.onScanning?.(input.file_path);
+              this.reportProgress(`Reading: ${input.file_path.split('/').pop()}`);
+            } else if (toolName === 'Glob' || toolName === 'Grep') {
+              this.reportProgress(`Searching: ${input.pattern || '...'}`);
+            } else {
+              this.reportProgress(`Using ${toolName}...`);
+            }
+          }
+        }
+      } else if (event.type === 'user') {
+        // Tool result - show activity
+        if (event.tool_use_result) {
+          const numFiles = event.tool_use_result.numFiles;
+          if (numFiles) {
+            this.reportProgress(`Found ${numFiles} files...`);
+          }
+        }
+      } else if (event.type === 'result') {
+        // Final result - check for our markers and understanding
+        if (event.result) {
+          this.processTextContent(event.result, callbacks);
+        }
+        callbacks.onComplete?.();
+      } else if (event.type === 'error') {
+        callbacks.onError?.(event.error || event.message || 'Unknown error');
+      }
+
+      return;
+    } catch {
+      // Not JSON - fall through to marker-based parsing
+    }
+
+    // Legacy marker-based parsing
     if (trimmed.startsWith(MARKERS.SCANNING)) {
       const file = trimmed.slice(MARKERS.SCANNING.length).trim();
       callbacks.onScanning?.(file);
@@ -393,6 +498,41 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
     } else if (trimmed.startsWith(MARKERS.ERROR)) {
       const error = trimmed.slice(MARKERS.ERROR.length).trim();
       callbacks.onError?.(error);
+    }
+  }
+
+  // Accumulated text for marker detection in streaming responses
+  private streamBuffer = '';
+
+  private processTextContent(
+    text: string,
+    callbacks: {
+      onScanning?: (file: string) => void;
+      onBugFound?: (bugJson: string) => void;
+      onUnderstanding?: (json: string) => void;
+      onComplete?: () => void;
+      onError?: (error: string) => void;
+    }
+  ): void {
+    this.streamBuffer += text;
+
+    // Check for complete markers in the accumulated buffer
+    const lines = this.streamBuffer.split('\n');
+    this.streamBuffer = lines.pop() || ''; // Keep incomplete line
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(MARKERS.SCANNING)) {
+        callbacks.onScanning?.(trimmed.slice(MARKERS.SCANNING.length).trim());
+      } else if (trimmed.startsWith(MARKERS.BUG)) {
+        callbacks.onBugFound?.(trimmed.slice(MARKERS.BUG.length).trim());
+      } else if (trimmed.startsWith(MARKERS.UNDERSTANDING)) {
+        callbacks.onUnderstanding?.(trimmed.slice(MARKERS.UNDERSTANDING.length).trim());
+      } else if (trimmed.startsWith(MARKERS.COMPLETE)) {
+        callbacks.onComplete?.();
+      } else if (trimmed.startsWith(MARKERS.ERROR)) {
+        callbacks.onError?.(trimmed.slice(MARKERS.ERROR.length).trim());
+      }
     }
   }
 

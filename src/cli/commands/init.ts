@@ -16,6 +16,7 @@ interface InitOptions {
   skipQuestions: boolean;
   force: boolean;
   unsafe: boolean;
+  skipProviderDetection?: boolean; // Skip provider detection when already verified (e.g., from wizard)
 }
 
 export async function initCommand(options: InitOptions): Promise<void> {
@@ -32,45 +33,58 @@ export async function initCommand(options: InitOptions): Promise<void> {
   p.intro(chalk.red('whiterose') + chalk.dim(' - initialization'));
 
   // ─────────────────────────────────────────────────────────────
-  // Phase 1: Detect available providers
+  // Phase 1: Detect available providers (skip if already verified)
   // ─────────────────────────────────────────────────────────────
-  const providerSpinner = p.spinner();
-  providerSpinner.start('Detecting available LLM providers...');
-
-  const availableProviders = await detectProvider();
-
-  if (availableProviders.length === 0) {
-    providerSpinner.stop('No LLM providers detected');
-    p.log.error('whiterose requires an LLM provider to function.');
-    p.log.info('Supported providers: claude-code, aider, codex, opencode');
-    p.log.info('Install one and ensure it\'s configured, then run init again.');
-    process.exit(1);
-  }
-
-  providerSpinner.stop(`Detected providers: ${availableProviders.join(', ')}`);
-
-  // Select provider - always ask user to confirm
   let selectedProvider: ProviderType;
-  if (options.skipQuestions) {
-    // Only auto-select in skip mode
-    selectedProvider = availableProviders[0] as ProviderType;
-    p.log.info(`Using ${selectedProvider} as your LLM provider.`);
-  } else {
-    const providerChoice = await p.select({
-      message: 'Which LLM provider should whiterose use?',
-      options: availableProviders.map((prov) => ({
-        value: prov,
-        label: prov,
-        hint: prov === 'claude-code' ? 'recommended' : undefined,
-      })),
-    });
 
-    if (p.isCancel(providerChoice)) {
-      p.cancel('Initialization cancelled.');
-      process.exit(0);
+  if (options.skipProviderDetection && options.provider) {
+    // Provider already verified by wizard - use directly
+    selectedProvider = options.provider as ProviderType;
+  } else {
+    const providerSpinner = p.spinner();
+    providerSpinner.start('Detecting available LLM providers...');
+
+    const availableProviders = await detectProvider();
+
+    if (availableProviders.length === 0) {
+      providerSpinner.stop('No LLM providers detected');
+      p.log.error('whiterose requires an LLM provider to function.');
+      p.log.info('Supported providers: claude-code, aider, codex, opencode');
+      p.log.info('Install one and ensure it\'s configured, then run init again.');
+      process.exit(1);
     }
 
-    selectedProvider = providerChoice as ProviderType;
+    providerSpinner.stop(`Detected providers: ${availableProviders.join(', ')}`);
+
+    // Check if provider was passed and is available
+    const passedProvider = options.provider as ProviderType;
+    const isPassedProviderAvailable = availableProviders.includes(passedProvider);
+
+    if (isPassedProviderAvailable) {
+      // Use the passed provider without asking
+      selectedProvider = passedProvider;
+      p.log.info(`Using ${selectedProvider} as your LLM provider.`);
+    } else if (options.skipQuestions) {
+      // Only auto-select in skip mode
+      selectedProvider = availableProviders[0] as ProviderType;
+      p.log.info(`Using ${selectedProvider} as your LLM provider.`);
+    } else {
+      const providerChoice = await p.select({
+        message: 'Which LLM provider should whiterose use?',
+        options: availableProviders.map((prov) => ({
+          value: prov,
+          label: prov,
+          hint: prov === 'claude-code' ? 'recommended' : undefined,
+        })),
+      });
+
+      if (p.isCancel(providerChoice)) {
+        p.cancel('Initialization cancelled.');
+        process.exit(0);
+      }
+
+      selectedProvider = providerChoice as ProviderType;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────

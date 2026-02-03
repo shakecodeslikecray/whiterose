@@ -11,6 +11,7 @@ import { statusCommand } from './commands/status.js';
 import { reportCommand } from './commands/report.js';
 import { detectProvider } from '../providers/detect.js';
 import { ProviderType } from '../types.js';
+import { pathInput } from './utils/path-input.js';
 
 const BANNER = `
 ${chalk.red('██╗    ██╗██╗  ██╗██╗████████╗███████╗██████╗  ██████╗ ███████╗███████╗')}
@@ -28,7 +29,7 @@ const program = new Command();
 program
   .name('whiterose')
   .description('AI-powered bug hunter that uses your existing LLM subscription')
-  .version('0.2.0')
+  .version('0.2.1')
   .hook('preAction', () => {
     // Show banner only for main commands, not help
     const args = process.argv.slice(2);
@@ -114,15 +115,14 @@ async function showInteractiveWizard(): Promise<void> {
   p.intro(chalk.red('whiterose') + chalk.dim(' - AI Bug Hunter'));
 
   // ─────────────────────────────────────────────────────────────
-  // Step 1: Repository path
+  // Step 1: Repository path (with Tab completion)
   // ─────────────────────────────────────────────────────────────
   const cwd = process.cwd();
   const defaultPath = cwd;
 
-  const repoPath = await p.text({
+  const repoPath = await pathInput({
     message: 'Repository path',
-    placeholder: defaultPath,
-    initialValue: defaultPath,
+    defaultValue: defaultPath,
     validate: (value) => {
       const path = value || defaultPath;
       if (!existsSync(path)) {
@@ -132,7 +132,7 @@ async function showInteractiveWizard(): Promise<void> {
     },
   });
 
-  if (p.isCancel(repoPath)) {
+  if (repoPath === null) {
     p.cancel('Cancelled.');
     process.exit(0);
   }
@@ -186,7 +186,26 @@ async function showInteractiveWizard(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Step 3: Initialize if needed
+  // Step 3: Ask about LLM permission prompts
+  // ─────────────────────────────────────────────────────────────
+  const bypassPrompts = await p.confirm({
+    message: 'Bypass LLM permission prompts? (recommended for smoother experience)',
+    initialValue: true,
+  });
+
+  if (p.isCancel(bypassPrompts)) {
+    p.cancel('Cancelled.');
+    process.exit(0);
+  }
+
+  const unsafeMode = bypassPrompts === true;
+
+  if (!unsafeMode) {
+    p.log.info(chalk.dim('You may need to accept prompts in the LLM CLI during analysis.'));
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Step 4: Initialize if needed
   // ─────────────────────────────────────────────────────────────
   if (!isInitialized) {
     p.log.warn(`Project "${projectName}" is not initialized.`);
@@ -208,7 +227,8 @@ async function showInteractiveWizard(): Promise<void> {
       provider: selectedProvider,
       skipQuestions: false,
       force: false,
-      unsafe: false,
+      unsafe: unsafeMode,
+      skipProviderDetection: true, // Already verified in wizard
     });
 
     console.log(); // spacing after init
@@ -218,7 +238,7 @@ async function showInteractiveWizard(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Step 4: Scan depth
+  // Step 5: Scan depth
   // ─────────────────────────────────────────────────────────────
   const scanDepth = await p.select({
     message: 'Scan depth',
@@ -243,7 +263,7 @@ async function showInteractiveWizard(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Step 5: Start scan
+  // Step 6: Start scan
   // ─────────────────────────────────────────────────────────────
   console.log();
   p.log.step('Starting scan...');
@@ -257,7 +277,7 @@ async function showInteractiveWizard(): Promise<void> {
     category: undefined,
     minConfidence: 'low',
     adversarial: true,
-    unsafe: false,
+    unsafe: unsafeMode,
   });
 }
 

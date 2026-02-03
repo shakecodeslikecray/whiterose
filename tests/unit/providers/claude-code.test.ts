@@ -6,15 +6,40 @@ class MockStdout extends EventEmitter {
   pipe() { return this; }
 }
 
-// Create mock subprocess
-function createMockProcess(outputLines: string[] = []) {
+// Create mock spawn process (simulates child_process.ChildProcess)
+function createMockSpawnProcess(outputLines: string[] = []) {
+  const stdout = new MockStdout();
+  const stderr = new MockStdout();
+  const mockProcess = new EventEmitter() as EventEmitter & {
+    stdout: MockStdout;
+    stderr: MockStdout;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  mockProcess.stdout = stdout;
+  mockProcess.stderr = stderr;
+  mockProcess.kill = vi.fn();
+
+  // Simulate async streaming and exit
+  setTimeout(() => {
+    outputLines.forEach((line, i) => {
+      setTimeout(() => stdout.emit('data', Buffer.from(line + '\n')), i * 10);
+    });
+    setTimeout(() => {
+      mockProcess.emit('exit', 0);
+    }, outputLines.length * 10 + 50);
+  }, 0);
+
+  return mockProcess;
+}
+
+// Create mock for execa (still used for adversarial validation)
+function createMockExecaProcess(outputLines: string[] = []) {
   const stdout = new MockStdout();
   const mockProcess = {
     stdout,
     stderr: new MockStdout(),
     kill: vi.fn(),
     then: (resolve: any) => {
-      // Simulate async streaming
       setTimeout(() => {
         outputLines.forEach((line, i) => {
           setTimeout(() => stdout.emit('data', Buffer.from(line + '\n')), i * 10);
@@ -31,6 +56,10 @@ function createMockProcess(outputLines: string[] = []) {
   return mockProcess;
 }
 
+vi.mock('child_process', () => ({
+  spawn: vi.fn(),
+}));
+
 vi.mock('execa', () => ({
   execa: vi.fn(),
 }));
@@ -45,6 +74,7 @@ vi.mock('../../../src/providers/detect', () => ({
   getProviderCommand: vi.fn().mockReturnValue('claude'),
 }));
 
+import { spawn } from 'child_process';
 import { execa } from 'execa';
 import { existsSync, readFileSync } from 'fs';
 import { ClaudeCodeProvider } from '../../../src/providers/adapters/claude-code';
@@ -153,13 +183,13 @@ describe('providers/adapters/claude-code', () => {
         evidence: ['No null check'],
       });
 
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###SCANNING:src/test.ts',
         `###BUG:${bugJson}`,
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const bugs = await provider.analyze({
         files: ['/project/src/test.ts'],
@@ -175,13 +205,13 @@ describe('providers/adapters/claude-code', () => {
     });
 
     it('should handle streaming with no bugs found', async () => {
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###SCANNING:src/test.ts',
         '###SCANNING:src/utils.ts',
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const bugs = await provider.analyze({
         files: ['/project/src/test.ts'],
@@ -197,14 +227,14 @@ describe('providers/adapters/claude-code', () => {
       const bug1 = JSON.stringify({ file: 'test.ts', line: 1, title: 'Bug 1', severity: 'high', category: 'logic-error' });
       const bug2 = JSON.stringify({ file: 'test.ts', line: 2, title: 'Bug 2', severity: 'medium', category: 'null-reference' });
 
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###SCANNING:test.ts',
         `###BUG:${bug1}`,
         `###BUG:${bug2}`,
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const bugs = await provider.analyze({
         files: ['/project/test.ts'],
@@ -219,12 +249,12 @@ describe('providers/adapters/claude-code', () => {
     });
 
     it('should report progress via callback', async () => {
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###SCANNING:src/api.ts',
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const progressMessages: string[] = [];
       provider.setProgressCallback((msg) => progressMessages.push(msg));
@@ -239,9 +269,9 @@ describe('providers/adapters/claude-code', () => {
       expect(progressMessages).toContain('Scanning: src/api.ts');
     });
 
-    it('should call execa with correct arguments (no unsafe flag by default)', async () => {
-      const mockProcess = createMockProcess(['###COMPLETE']);
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+    it('should call spawn with correct arguments (no unsafe flag by default)', async () => {
+      const mockProcess = createMockSpawnProcess(['###COMPLETE']);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       await provider.analyze({
         files: ['/project/src/test.ts'],
@@ -250,19 +280,19 @@ describe('providers/adapters/claude-code', () => {
         staticAnalysisResults: [],
       });
 
-      expect(execa).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         'claude',
         expect.arrayContaining(['--verbose', '-p']),
         expect.objectContaining({ env: expect.any(Object) })
       );
       // Should NOT contain the unsafe flag by default
-      const callArgs = vi.mocked(execa).mock.calls[0][1] as string[];
-      expect(callArgs).not.toContain('--dangerously-skip-permissions');
+      const callArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+      expect(callArgs).not.toContain('--allowedTools');
     });
 
-    it('should include --dangerously-skip-permissions when unsafe mode is enabled', async () => {
-      const mockProcess = createMockProcess(['###COMPLETE']);
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+    it('should include --allowedTools when unsafe mode is enabled', async () => {
+      const mockProcess = createMockSpawnProcess(['###COMPLETE']);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       provider.setUnsafeMode(true);
 
@@ -273,8 +303,8 @@ describe('providers/adapters/claude-code', () => {
         staticAnalysisResults: [],
       });
 
-      const callArgs = vi.mocked(execa).mock.calls[0][1] as string[];
-      expect(callArgs).toContain('--dangerously-skip-permissions');
+      const callArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+      expect(callArgs).toContain('--allowedTools');
     });
   });
 
@@ -380,14 +410,14 @@ describe('providers/adapters/claude-code', () => {
         contracts: [],
       });
 
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###SCANNING:package.json',
         '###SCANNING:src/index.ts',
         `###UNDERSTANDING:${understandingJson}`,
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const understanding = await provider.generateUnderstanding(['/project/src/index.ts']);
 
@@ -397,12 +427,12 @@ describe('providers/adapters/claude-code', () => {
     });
 
     it('should handle parse errors gracefully', async () => {
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###UNDERSTANDING:not valid json',
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const understanding = await provider.generateUnderstanding(['/project/src/index.ts']);
 
@@ -417,13 +447,13 @@ describe('providers/adapters/claude-code', () => {
         contracts: [],
       });
 
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         '###SCANNING:src/index.ts',
         `###UNDERSTANDING:${understandingJson}`,
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const progressMessages: string[] = [];
       provider.setProgressCallback((msg) => progressMessages.push(msg));
@@ -440,12 +470,12 @@ describe('providers/adapters/claude-code', () => {
         contracts: [],
       });
 
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         `###UNDERSTANDING:${understandingJson}`,
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const understanding = await provider.generateUnderstanding([
         '/project/src/a.ts',
@@ -458,11 +488,9 @@ describe('providers/adapters/claude-code', () => {
 
   describe('cancel', () => {
     it('should kill the current process', async () => {
-      const mockKill = vi.fn();
-      const mockProcess = createMockProcess(['###COMPLETE']);
-      (mockProcess as any).kill = mockKill;
+      const mockProcess = createMockSpawnProcess(['###COMPLETE']);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       // Start analysis (don't await)
       const analysisPromise = provider.analyze({
@@ -478,7 +506,7 @@ describe('providers/adapters/claude-code', () => {
       // Wait for analysis to complete
       await analysisPromise;
 
-      expect(mockKill).toHaveBeenCalled();
+      expect(mockProcess.kill).toHaveBeenCalled();
     });
   });
 
@@ -492,12 +520,12 @@ describe('providers/adapters/claude-code', () => {
         category: 'logic-error',
       });
 
-      const mockProcess = createMockProcess([
+      const mockProcess = createMockSpawnProcess([
         `###BUG:${bugJson}`,
         '###COMPLETE',
       ]);
 
-      vi.mocked(execa).mockReturnValue(mockProcess as any);
+      vi.mocked(spawn).mockReturnValue(mockProcess as any);
 
       const foundBugs: any[] = [];
       provider.setBugFoundCallback((bug) => foundBugs.push(bug));
