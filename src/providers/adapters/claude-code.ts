@@ -7,12 +7,15 @@ import {
   Bug,
   AdversarialResult,
   CodebaseUnderstanding,
-  BugSeverity,
-  BugCategory,
-  ConfidenceLevel,
 } from '../../types.js';
 import { isProviderAvailable, getProviderCommand } from '../detect.js';
 import { generateBugId } from '../../core/utils.js';
+import {
+  safeParseJson,
+  PartialBugFromLLM,
+  PartialUnderstandingFromLLM,
+  AdversarialResultSchema,
+} from '../../core/validation.js';
 
 // Callback for streaming progress updates
 type ProgressCallback = (message: string) => void;
@@ -419,151 +422,163 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
   // ─────────────────────────────────────────────────────────────
 
   private parseBugData(json: string, index: number, files: string[]): Bug | null {
-    try {
-      const data = JSON.parse(json);
-
-      if (!data.file || !data.line || !data.title) {
-        return null;
-      }
-
-      // Resolve file path
-      let filePath = data.file;
-      if (!filePath.startsWith('/')) {
-        const match = files.find(f => f.endsWith(filePath) || f.includes(filePath));
-        if (match) filePath = match;
-      }
-
-      return {
-        id: generateBugId(index),
-        title: String(data.title).slice(0, 100),
-        description: String(data.description || ''),
-        file: filePath,
-        line: Number(data.line) || 0,
-        endLine: data.endLine ? Number(data.endLine) : undefined,
-        severity: this.parseSeverity(data.severity),
-        category: this.parseCategory(data.category),
-        confidence: {
-          overall: 'medium' as ConfidenceLevel,
-          codePathValidity: 0.8,
-          reachability: 0.8,
-          intentViolation: false,
-          staticToolSignal: false,
-          adversarialSurvived: false,
-        },
-        codePath: (data.codePath || []).map((step: any, idx: number) => ({
-          step: idx + 1,
-          file: step.file || filePath,
-          line: step.line || data.line,
-          code: step.code || '',
-          explanation: step.explanation || '',
-        })),
-        evidence: Array.isArray(data.evidence) ? data.evidence : [],
-        suggestedFix: data.suggestedFix,
-        createdAt: new Date().toISOString(),
-      };
-    } catch {
+    // Use Zod validation for safe parsing
+    const result = safeParseJson(json, PartialBugFromLLM);
+    if (!result.success) {
       return null;
     }
+
+    const data = result.data;
+
+    // Resolve file path
+    let filePath = data.file;
+    if (!filePath.startsWith('/')) {
+      const match = files.find(f => f.endsWith(filePath) || f.includes(filePath));
+      if (match) filePath = match;
+    }
+
+    return {
+      id: generateBugId(index),
+      title: String(data.title).slice(0, 100),
+      description: String(data.description || ''),
+      file: filePath,
+      line: data.line,
+      endLine: data.endLine,
+      severity: data.severity,
+      category: data.category,
+      confidence: {
+        overall: data.confidence?.overall || 'medium',
+        codePathValidity: data.confidence?.codePathValidity ?? 0.8,
+        reachability: data.confidence?.reachability ?? 0.8,
+        intentViolation: data.confidence?.intentViolation ?? false,
+        staticToolSignal: data.confidence?.staticToolSignal ?? false,
+        adversarialSurvived: data.confidence?.adversarialSurvived ?? false,
+      },
+      codePath: (data.codePath || []).map((step, idx) => ({
+        step: idx + 1,
+        file: step.file || filePath,
+        line: step.line || data.line,
+        code: step.code || '',
+        explanation: step.explanation || '',
+      })),
+      evidence: data.evidence || [],
+      suggestedFix: data.suggestedFix,
+      createdAt: new Date().toISOString(),
+    };
   }
 
   private parseAdversarialResponse(response: string, bug: Bug): AdversarialResult {
-    try {
-      const json = this.extractJson(response);
-      if (!json) {
-        return { survived: true, counterArguments: [] };
-      }
-
-      const parsed = JSON.parse(json);
-      const survived = parsed.survived !== false;
-
-      return {
-        survived,
-        counterArguments: Array.isArray(parsed.counterArguments)
-          ? parsed.counterArguments.map(String)
-          : [],
-        adjustedConfidence: survived
-          ? {
-              ...bug.confidence,
-              overall: this.parseConfidence(parsed.confidence),
-              adversarialSurvived: true,
-            }
-          : undefined,
-      };
-    } catch {
+    const json = this.extractJson(response);
+    if (!json) {
       return { survived: true, counterArguments: [] };
     }
+
+    // Use Zod validation for safe parsing
+    const result = safeParseJson(json, AdversarialResultSchema);
+    if (!result.success) {
+      // Conservative: if parsing fails, assume bug survived
+      return { survived: true, counterArguments: [] };
+    }
+
+    const parsed = result.data;
+    const survived = parsed.survived !== false;
+
+    return {
+      survived,
+      counterArguments: parsed.counterArguments || [],
+      adjustedConfidence: survived
+        ? {
+            ...bug.confidence,
+            overall: parsed.confidence || bug.confidence.overall,
+            adversarialSurvived: true,
+          }
+        : undefined,
+    };
   }
 
   private parseUnderstandingResponse(response: string, files: string[]): CodebaseUnderstanding {
-    try {
-      const json = this.extractJson(response);
-      if (!json) {
-        throw new Error('No JSON found in understanding response');
+    // Count total lines from a sample (needed for fallback and success cases)
+    let totalLines = 0;
+    for (const file of files.slice(0, 50)) {
+      try {
+        const content = readFileSync(file, 'utf-8');
+        totalLines += content.split('\n').length;
+      } catch {
+        // Skip unreadable files
       }
+    }
 
-      const parsed = JSON.parse(json);
-
-      // Count total lines from a sample
-      let totalLines = 0;
-      for (const file of files.slice(0, 50)) {
-        try {
-          const content = readFileSync(file, 'utf-8');
-          totalLines += content.split('\n').length;
-        } catch {
-          // Skip unreadable files
-        }
-      }
-
-      return {
-        version: '1',
-        generatedAt: new Date().toISOString(),
-        summary: {
-          type: parsed.summary?.type || 'unknown',
-          framework: parsed.summary?.framework || undefined,
-          language: parsed.summary?.language || 'typescript',
-          description: parsed.summary?.description || 'No description available',
-        },
-        features: (parsed.features || []).map((f: any) => ({
-          name: f.name || 'Unknown',
-          description: f.description || '',
-          priority: f.priority || 'medium',
-          constraints: Array.isArray(f.constraints) ? f.constraints : [],
-          relatedFiles: Array.isArray(f.relatedFiles) ? f.relatedFiles : [],
-        })),
-        contracts: (parsed.contracts || []).map((c: any) => ({
-          function: c.function || 'unknown',
-          file: c.file || 'unknown',
-          inputs: Array.isArray(c.inputs) ? c.inputs : [],
-          outputs: c.outputs || { type: 'unknown' },
-          invariants: Array.isArray(c.invariants) ? c.invariants : [],
-          sideEffects: Array.isArray(c.sideEffects) ? c.sideEffects : [],
-          throws: Array.isArray(c.throws) ? c.throws : undefined,
-        })),
-        dependencies: {},
-        structure: {
-          totalFiles: files.length,
-          totalLines,
-        },
-      };
-    } catch (error) {
-      // Return minimal understanding on failure
+    const json = this.extractJson(response);
+    if (!json) {
+      // Return minimal understanding when no JSON found
       return {
         version: '1',
         generatedAt: new Date().toISOString(),
         summary: {
           type: 'unknown',
-          language: 'typescript',
-          description: 'Failed to analyze codebase. Please run whiterose refresh.',
+          language: 'unknown',
+          description: 'Failed to analyze codebase: No JSON found in response',
         },
         features: [],
         contracts: [],
         dependencies: {},
-        structure: {
-          totalFiles: files.length,
-          totalLines: 0,
-        },
+        structure: { totalFiles: files.length, totalLines },
       };
     }
+
+    // Use Zod validation for safe parsing
+    const result = safeParseJson(json, PartialUnderstandingFromLLM);
+
+    if (!result.success) {
+      // Return minimal understanding on validation failure
+      return {
+        version: '1',
+        generatedAt: new Date().toISOString(),
+        summary: {
+          type: 'unknown',
+          language: 'unknown',
+          description: `Failed to analyze codebase: ${result.error}`,
+        },
+        features: [],
+        contracts: [],
+        dependencies: {},
+        structure: { totalFiles: files.length, totalLines },
+      };
+    }
+
+    const parsed = result.data;
+
+    return {
+      version: '1',
+      generatedAt: new Date().toISOString(),
+      summary: {
+        type: parsed.summary?.type || 'unknown',
+        framework: parsed.summary?.framework || undefined,
+        language: parsed.summary?.language || 'typescript',
+        description: parsed.summary?.description || 'No description available',
+      },
+      features: (parsed.features || []).map((f) => ({
+        name: f.name || 'Unknown',
+        description: f.description || '',
+        priority: f.priority || 'medium',
+        constraints: f.constraints || [],
+        relatedFiles: f.relatedFiles || [],
+      })),
+      contracts: (parsed.contracts || []).map((c) => ({
+        function: c.function || 'unknown',
+        file: c.file || 'unknown',
+        inputs: c.inputs || [],
+        outputs: c.outputs || { type: 'unknown' },
+        invariants: c.invariants || [],
+        sideEffects: c.sideEffects || [],
+        throws: c.throws,
+      })),
+      dependencies: {},
+      structure: {
+        totalFiles: files.length,
+        totalLines,
+      },
+    };
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -590,41 +605,5 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
     }
 
     return null;
-  }
-
-  private parseSeverity(value: unknown): BugSeverity {
-    const str = String(value).toLowerCase();
-    if (['critical', 'high', 'medium', 'low'].includes(str)) {
-      return str as BugSeverity;
-    }
-    return 'medium';
-  }
-
-  private parseCategory(value: unknown): BugCategory {
-    const str = String(value).toLowerCase().replace(/_/g, '-');
-    const validCategories: BugCategory[] = [
-      'logic-error', 'security', 'async-race-condition', 'edge-case',
-      'null-reference', 'type-coercion', 'resource-leak', 'intent-violation',
-    ];
-
-    if (validCategories.includes(str as BugCategory)) {
-      return str as BugCategory;
-    }
-
-    // Map common variations
-    if (str.includes('null') || str.includes('undefined')) return 'null-reference';
-    if (str.includes('security') || str.includes('injection') || str.includes('xss')) return 'security';
-    if (str.includes('async') || str.includes('race') || str.includes('promise')) return 'async-race-condition';
-    if (str.includes('edge') || str.includes('boundary')) return 'edge-case';
-
-    return 'logic-error';
-  }
-
-  private parseConfidence(value: unknown): ConfidenceLevel {
-    const str = String(value).toLowerCase();
-    if (['high', 'medium', 'low'].includes(str)) {
-      return str as ConfidenceLevel;
-    }
-    return 'medium';
   }
 }
