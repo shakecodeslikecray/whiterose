@@ -357,6 +357,7 @@ Output JSON ONLY describing:
           evidence: Array.isArray(item.evidence) ? item.evidence.map(String) : [],
           suggestedFix: item.suggestedFix ? String(item.suggestedFix) : undefined,
           createdAt: new Date().toISOString(),
+          status: 'open',
         });
       }
 
@@ -466,14 +467,65 @@ Output JSON ONLY describing:
   // ─────────────────────────────────────────────────────────────
 
   private extractJson(text: string): string | null {
+    // Try code blocks first (most reliable)
     const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) return codeBlockMatch[1].trim();
 
-    const arrayMatch = text.match(/\[[\s\S]*\]/);
-    if (arrayMatch) return arrayMatch[0];
+    // Use non-greedy matching to find first complete JSON array
+    const arrayMatch = text.match(/\[[\s\S]*?\]/);
+private extractJson(text: string): string | null {
+    // Try code blocks first (most reliable)
+    const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) return codeBlockMatch[1].trim();
 
-    const objectMatch = text.match(/\{[\s\S]*\}/);
-    if (objectMatch) return objectMatch[0];
+    // Find balanced JSON using bracket counting
+    return this.findBalancedJson(text);
+    }
+
+    private findBalancedJson(text: string): string | null {
+    const objectStart = text.indexOf('{');
+    const arrayStart = text.indexOf('[');
+
+    let start = -1;
+    let openChar = '{';
+    let closeChar = '}';
+
+    if (objectStart === -1 && arrayStart === -1) return null;
+    if (objectStart === -1) { start = arrayStart; openChar = '['; closeChar = ']'; }
+    else if (arrayStart === -1) { start = objectStart; }
+    else if (arrayStart < objectStart) { start = arrayStart; openChar = '['; closeChar = ']'; }
+    else { start = objectStart; }
+
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (escapeNext) { escapeNext = false; continue; }
+    if (char === '\\' && inString) { escapeNext = true; continue; }
+    if (char === '"' && !escapeNext) { inString = !inString; continue; }
+    if (inString) continue;
+    if (char === openChar) depth++;
+    else if (char === closeChar) {
+    depth--;
+    if (depth === 0) return text.slice(start, i + 1);
+    }
+    }
+    return null;
+    }
+    }
+
+    // Use non-greedy matching to find first complete JSON object
+    const objectMatch = text.match(/\{[\s\S]*?\}/);
+    if (objectMatch) {
+      try {
+        JSON.parse(objectMatch[0]);
+        return objectMatch[0];
+      } catch {
+        // Not valid JSON
+      }
+    }
 
     return null;
   }
@@ -489,17 +541,31 @@ Output JSON ONLY describing:
   private parseCategory(value: unknown): BugCategory {
     const str = String(value).toLowerCase().replace(/_/g, '-');
     const validCategories: BugCategory[] = [
-      'logic-error', 'security', 'async-race-condition', 'edge-case',
-      'null-reference', 'type-coercion', 'resource-leak', 'intent-violation',
+      // Security
+      'injection', 'auth-bypass', 'secrets-exposure',
+      // Reliability
+      'null-reference', 'boundary-error', 'resource-leak', 'async-issue',
+      // Correctness
+      'logic-error', 'data-validation', 'type-coercion',
+      // Design
+      'concurrency', 'intent-violation',
     ];
 
     if (validCategories.includes(str as BugCategory)) {
       return str as BugCategory;
     }
 
+    // Map common patterns to new categories
     if (str.includes('null') || str.includes('undefined')) return 'null-reference';
-    if (str.includes('security')) return 'security';
-    if (str.includes('async') || str.includes('race')) return 'async-race-condition';
+    if (str.includes('injection') || str.includes('xss') || str.includes('sql')) return 'injection';
+    if (str.includes('auth') || str.includes('permission') || str.includes('access')) return 'auth-bypass';
+    if (str.includes('secret') || str.includes('credential') || str.includes('password')) return 'secrets-exposure';
+    if (str.includes('async') || str.includes('race') || str.includes('await') || str.includes('promise')) return 'async-issue';
+    if (str.includes('boundary') || str.includes('index') || str.includes('overflow')) return 'boundary-error';
+    if (str.includes('leak') || str.includes('resource') || str.includes('memory')) return 'resource-leak';
+    if (str.includes('validation') || str.includes('sanitiz')) return 'data-validation';
+    if (str.includes('thread') || str.includes('concurrent') || str.includes('deadlock')) return 'concurrency';
+    if (str.includes('coercion') || str.includes('type')) return 'type-coercion';
 
     return 'logic-error';
   }
