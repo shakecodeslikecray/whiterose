@@ -444,8 +444,8 @@ Set "survived": true if you CANNOT disprove it (it's a real bug).`;
       file: filePath,
       line: data.line,
       endLine: data.endLine,
-      severity: data.severity,
-      category: data.category,
+      severity: data.severity ?? 'medium',
+      category: data.category ?? 'logic-error',
       confidence: {
         overall: data.confidence?.overall || 'medium',
         codePathValidity: data.confidence?.codePathValidity ?? 0.8,
