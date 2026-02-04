@@ -1,6 +1,7 @@
 import { execa } from 'execa';
-import { readFileSync, existsSync, realpathSync, statSync } from 'fs';
-import { resolve, relative, isAbsolute } from 'path';
+import { readFileSync, existsSync, realpathSync, statSync, mkdtempSync, rmSync } from 'fs';
+import { resolve, relative, isAbsolute, join } from 'path';
+import { tmpdir } from 'os';
 import { Bug, WhiteroseConfig } from '../types.js';
 import { createFixBranch, commitFix } from './git.js';
 import { getProviderCommand } from '../providers/detect.js';
@@ -215,34 +216,81 @@ async function runAgenticFix(
     // Aider: pass the message and file
     args.push('--message', prompt, bug.file);
   } else if (config.provider === 'codex') {
-    // Codex: pass prompt
-    args.push('-p', prompt);
+    // Codex: use exec subcommand with stdin for prompt
+    // This is handled specially below
   } else {
     // Default: try -p flag
     args.push('-p', prompt);
   }
 
   // Run the provider
-  const { stdout, stderr } = await execa(providerCommand, args, {
-    cwd: projectDir,
-    timeout: 300000, // 5 minute timeout for agentic operations
-    env: { ...process.env, NO_COLOR: '1' },
-    reject: false, // Don't throw on non-zero exit
-  });
+  let stdout = '';
+  let stderr = '';
 
-  // Check for known error patterns
+  if (config.provider === 'codex') {
+    // Codex requires special handling: exec subcommand with stdin and temp file output
+    const tempDir = mkdtempSync(join(tmpdir(), 'whiterose-fix-'));
+    const outputFile = join(tempDir, 'output.txt');
+
+    try {
+      const result = await execa(
+        providerCommand,
+        ['exec', '--skip-git-repo-check', '-o', outputFile, '-'],
+        {
+          cwd: projectDir,
+          input: prompt, // Pass prompt via stdin
+          timeout: 300000,
+          env: { ...process.env, NO_COLOR: '1' },
+          reject: false,
+        }
+      );
+
+      stderr = result.stderr || '';
+
+      // Read output from file if it exists, otherwise use stdout
+      if (existsSync(outputFile)) {
+        try {
+          stdout = readFileSync(outputFile, 'utf-8');
+        } catch {
+          stdout = result.stdout || '';
+        }
+      } else {
+        stdout = result.stdout || '';
+      }
+    } finally {
+      // Cleanup temp dir
+      try {
+        rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  } else {
+    // Standard execution for other providers
+    const result = await execa(providerCommand, args, {
+      cwd: projectDir,
+      timeout: 300000, // 5 minute timeout for agentic operations
+      env: { ...process.env, NO_COLOR: '1' },
+      reject: false, // Don't throw on non-zero exit
+    });
+    stdout = result.stdout || '';
+    stderr = result.stderr || '';
+  }
+
+  // Check for known error patterns (only for actual ENOENT errors, not content)
   if (stderr) {
     const lowerStderr = stderr.toLowerCase();
-    if (lowerStderr.includes('not found') || lowerStderr.includes('enoent')) {
+    // Only throw if it's actually an ENOENT error from execa, not from LLM output
+    if (lowerStderr.includes('enoent') && lowerStderr.includes('spawn')) {
       throw new Error(`Provider ${config.provider} not found. Is it installed?`);
     }
-    if (lowerStderr.includes('permission') || lowerStderr.includes('denied')) {
+    if (lowerStderr.includes('permission denied') && lowerStderr.includes('spawn')) {
       throw new Error('Permission denied. Check provider configuration.');
     }
   }
 
   // Check if LLM reported this as a false positive
-  const output = stdout || '';
+  const output = stdout;
   const falsePositiveMatch = output.match(/FALSE_POSITIVE:\s*(.+?)(?:\n|$)/i);
   if (falsePositiveMatch) {
     return {
