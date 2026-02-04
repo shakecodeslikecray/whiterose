@@ -13,6 +13,9 @@ import { clearCommand } from './commands/clear.js';
 import { detectProvider } from '../providers/detect.js';
 import { ProviderType } from '../types.js';
 
+// Increase max listeners to avoid warning when spawning multiple child processes
+process.setMaxListeners(50);
+
 const BANNER = `
 ${chalk.red('██╗    ██╗██╗  ██╗██╗████████╗███████╗██████╗  ██████╗ ███████╗███████╗')}
 ${chalk.red('██║    ██║██║  ██║██║╚══██╔══╝██╔════╝██╔══██╗██╔═══██╗██╔════╝██╔════╝')}

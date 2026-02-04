@@ -29,3 +29,6 @@ npm-debug.log*
 # whiterose cache and output (in other projects)
 .whiterose/
 whiterose-output/
+
+# whiterose cache
+.whiterose/cache/

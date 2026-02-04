@@ -20,7 +20,7 @@ import {
   AdversarialResultSchema,
 } from '../../core/validation.js';
 import {
-  buildThoroughScanPrompt,
+  buildAgenticScanPrompt,
   buildUnderstandingPrompt,
   buildAdversarialPrompt,
   buildOptimizedQuickScanPrompt,
@@ -339,7 +339,7 @@ export class ClaudeCodeProvider implements LLMProvider {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Thorough Scan - Agentic exploration (slow, for full audits)
+  // Thorough Scan - TRUE agentic exploration (LLM explores freely)
   // ─────────────────────────────────────────────────────────────
   private async thoroughScan(
     files: string[],
@@ -359,12 +359,19 @@ export class ClaudeCodeProvider implements LLMProvider {
       severity: r.severity,
     }));
 
-    const prompt = buildThoroughScanPrompt({
+    // Identify likely entry points for the LLM to start exploring
+    const entryPoints = this.identifyEntryPoints(files, understanding);
+
+    // Use the AGENTIC prompt - lets LLM explore with its tools
+    // instead of pre-stuffing content into the prompt
+    const prompt = buildAgenticScanPrompt({
       projectType: understanding.summary.type,
       framework: understanding.summary.framework || '',
       language: understanding.summary.language,
       description: understanding.summary.description,
+      totalFiles: understanding.structure.totalFiles,
       totalLOC: understanding.structure.totalLines,
+      entryPoints: entryPoints.length > 0 ? entryPoints : undefined,
       staticAnalysisFindings: staticFindings.length > 0 ? staticFindings : undefined,
     });
 
@@ -701,11 +708,11 @@ FIX:`;
     // Wait for process to complete
     try {
       await new Promise<void>((resolve, reject) => {
-        // Timeout after 5 minutes
+        // Timeout after 15 minutes for thorough agentic scans
         const timeout = setTimeout(() => {
           this.currentProcess?.kill();
-          reject(new Error('Claude analysis timed out after 5 minutes'));
-        }, 300000);
+          reject(new Error('Claude analysis timed out after 15 minutes'));
+        }, 900000);
 
         this.currentProcess?.on('exit', (code) => {
           clearTimeout(timeout);
@@ -1222,6 +1229,86 @@ FIX:`;
         totalLines,
       },
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Entry Point Detection (for agentic exploration)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Identify likely entry points for the LLM to start exploring.
+   * These are files where user input typically enters the system.
+   */
+  private identifyEntryPoints(files: string[], understanding: CodebaseUnderstanding): string[] {
+    const entryPoints: string[] = [];
+    const framework = understanding.summary.framework?.toLowerCase() || '';
+    const projectType = understanding.summary.type?.toLowerCase() || '';
+
+    // Framework-specific entry points
+    const patterns: string[] = [];
+
+    // Web frameworks
+    if (framework.includes('express') || framework.includes('fastify') || framework.includes('koa')) {
+      patterns.push('routes/', 'router', 'controllers/', 'api/', 'endpoints/');
+    }
+    if (framework.includes('next')) {
+      patterns.push('pages/api/', 'app/api/', 'pages/', 'app/');
+    }
+    if (framework.includes('nest')) {
+      patterns.push('.controller.ts', '.resolver.ts', '.gateway.ts');
+    }
+
+    // General patterns for APIs and web apps
+    if (projectType.includes('api') || projectType.includes('web') || projectType.includes('server')) {
+      patterns.push(
+        'src/api/',
+        'src/routes/',
+        'src/controllers/',
+        'src/handlers/',
+        'server/',
+        'api/',
+      );
+    }
+
+    // CLI tools
+    if (projectType.includes('cli')) {
+      patterns.push('src/cli/', 'src/commands/', 'bin/', 'cli/');
+    }
+
+    // Libraries
+    if (projectType.includes('library') || projectType.includes('package')) {
+      patterns.push('src/index.', 'lib/index.', 'index.');
+    }
+
+    // Find matching files
+    for (const file of files) {
+      const normalizedFile = file.toLowerCase();
+      for (const pattern of patterns) {
+        if (normalizedFile.includes(pattern.toLowerCase())) {
+          entryPoints.push(file);
+          break;
+        }
+      }
+    }
+
+    // If no framework-specific matches, look for common entry files
+    if (entryPoints.length === 0) {
+      const commonEntries = [
+        'index.ts', 'index.js', 'main.ts', 'main.js',
+        'app.ts', 'app.js', 'server.ts', 'server.js',
+        'handler.ts', 'handler.js',
+      ];
+
+      for (const file of files) {
+        const filename = file.split('/').pop()?.toLowerCase() || '';
+        if (commonEntries.includes(filename)) {
+          entryPoints.push(file);
+        }
+      }
+    }
+
+    // Limit to top 10 to avoid overwhelming the prompt
+    return entryPoints.slice(0, 10);
   }
 
   // ─────────────────────────────────────────────────────────────

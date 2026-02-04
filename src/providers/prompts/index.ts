@@ -58,3 +58,9 @@ export {
   buildOptimizedQuickScanPrompt,
   type OptimizedQuickScanContext,
 } from './optimized-quick-scan.js';
+
+export {
+  buildAgenticScanPrompt,
+  buildCategoryFocusedPrompt,
+  type AgenticScanContext,
+} from './agentic-scan.js';

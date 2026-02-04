@@ -286,6 +286,118 @@ export const CWE_PATTERNS: CWEPattern[] = [
     languages: ['javascript', 'typescript'],
     projectTypes: ['api', 'fullstack', 'web-app', 'library'],
   },
+
+  // INSECURE RANDOMNESS
+  {
+    id: 'CWE-330',
+    name: 'Insufficient Randomness',
+    description: 'Using weak random number generators for security-sensitive operations',
+    category: 'secrets-exposure',
+    codePatterns: [
+      'Math.random() used for IDs, tokens, or keys',
+      'Math.random().toString(36) for unique identifiers',
+      'Date.now() as sole source of uniqueness',
+      'Sequential IDs that can be guessed',
+    ],
+    languages: ['javascript', 'typescript'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
+
+  // UNSAFE TYPE ASSERTIONS
+  {
+    id: 'CWE-704',
+    name: 'Incorrect Type Conversion',
+    description: 'Unsafe type assertions that bypass type checking',
+    category: 'type-coercion',
+    codePatterns: [
+      'as any - bypasses all type checking',
+      'as unknown as T - double assertion to force types',
+      '! (non-null assertion) - assumes value is not null without checking',
+      'Type assertion on API response without validation',
+    ],
+    languages: ['typescript'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
+
+  // UNSAFE JSON PARSING
+  {
+    id: 'CWE-502',
+    name: 'Unsafe Deserialization',
+    description: 'JSON.parse or similar without validation or error handling',
+    category: 'data-validation',
+    codePatterns: [
+      'JSON.parse(input) without try/catch',
+      'JSON.parse result used directly without schema validation',
+      'Zod/Joi schema exists but not used for parsing',
+      'Type assertion after JSON.parse: JSON.parse(x) as MyType',
+    ],
+    languages: ['javascript', 'typescript'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
+
+  // REGEX ISSUES
+  {
+    id: 'CWE-185',
+    name: 'Incorrect Regular Expression',
+    description: 'Regex that matches unintended content or misses edge cases',
+    category: 'logic-error',
+    codePatterns: [
+      'Regex matching braces/brackets without skipping strings: line.match(/{/g)',
+      'Unanchored regex that matches substrings: /pattern/ instead of /^pattern$/',
+      'Regex without escaping special chars in user input',
+      'Greedy matching that captures too much: .* instead of .*?',
+    ],
+    languages: ['javascript', 'typescript', 'python', 'go'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
+
+  // STRING MANIPULATION ERRORS
+  {
+    id: 'CWE-131',
+    name: 'Incorrect Buffer Size',
+    description: 'String slice/substring with incorrect bounds',
+    category: 'boundary-error',
+    codePatterns: [
+      'str.slice(0, str.length - x) where x could exceed length',
+      'str.substring(start, end) without validating start < end',
+      'Array index from string length calculation without bounds check',
+      'Negative index to slice without checking string length',
+    ],
+    languages: ['javascript', 'typescript'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
+
+  // MISSING NULL CHECKS BEFORE METHOD CALLS
+  {
+    id: 'CWE-252',
+    name: 'Unchecked Return Value',
+    description: 'Calling methods on values that could be null/undefined',
+    category: 'null-reference',
+    codePatterns: [
+      '.map() on potentially undefined array: items.map() without items &&',
+      '.filter()/.reduce() on optional property without null check',
+      'Object.keys(obj) where obj could be undefined',
+      'Chained method calls without optional chaining: a.b.c.map()',
+    ],
+    languages: ['javascript', 'typescript'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
+
+  // WEAK VALIDATION
+  {
+    id: 'CWE-183',
+    name: 'Permissive Whitelist',
+    description: 'Validation logic that accepts invalid input',
+    category: 'data-validation',
+    codePatterns: [
+      'Validation that accepts if ANY condition passes instead of ALL',
+      'Length-based validation as only check for correctness',
+      'Regex that allows injection via alternation: (valid|.+)',
+      'Fallback to default on validation failure instead of rejecting',
+    ],
+    languages: ['javascript', 'typescript', 'python', 'go'],
+    projectTypes: ['api', 'fullstack', 'web-app', 'cli', 'library'],
+  },
 ];
 
 /**
