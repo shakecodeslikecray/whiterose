@@ -5,13 +5,10 @@ import { Dashboard } from './screens/Dashboard.js';
 import { BugList } from './screens/BugList.js';
 import { BugDetail } from './screens/BugDetail.js';
 import { FixConfirm } from './screens/FixConfirm.js';
+import { FixResultInfo, Screen } from './types.js';
 
-export type Screen = 'dashboard' | 'list' | 'detail' | 'fix';
-
-export interface FixResultInfo {
-  falsePositive: boolean;
-  falsePositiveReason?: string;
-}
+// Re-export for backwards compatibility
+export type { FixResultInfo, Screen } from './types.js';
 
 export interface AppState {
   screen: Screen;

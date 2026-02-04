@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import { Bug } from '../../types.js';
-import { FixResultInfo } from '../App.js';
+import { FixResultInfo } from '../types.js';
 
 interface FixConfirmProps {
   bug: Bug;

@@ -3,7 +3,8 @@ import chalk from 'chalk';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { loadConfig } from '../../core/config.js';
-import { getProvider } from '../../providers/index.js';
+import { getExecutor } from '../../providers/executors/index.js';
+import { CoreScanner } from '../../core/scanner.js';
 import { scanCodebase } from '../../core/scanner/index.js';
 import { generateIntentDocument } from '../../core/contracts/intent.js';
 
@@ -38,8 +39,15 @@ export async function refreshCommand(options: RefreshOptions): Promise<void> {
   understandingSpinner.start('Regenerating understanding with AI...');
 
   try {
-    const provider = await getProvider(config.provider);
-    const understanding = await provider.generateUnderstanding(files);
+    const executor = getExecutor(config.provider);
+    const scanner = new CoreScanner(executor, {}, {
+      onProgress: (message: string) => {
+        if (message.trim()) {
+          understandingSpinner.message(message);
+        }
+      },
+    });
+    const understanding = await scanner.generateUnderstanding(files);
 
     // Write new understanding
     writeFileSync(

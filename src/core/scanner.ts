@@ -8,10 +8,11 @@
  * batching, deduplication, and merging logic.
  */
 
-import { Bug, CodebaseUnderstanding, WhiteroseConfig, BugCategory, BugSeverity, ConfidenceLevel, CodePathStep } from '../types.js';
+import { Bug, CodebaseUnderstanding, WhiteroseConfig, BugCategory, BugSeverity, ConfidenceLevel, CodePathStep, FeatureIntent, BehavioralContract } from '../types.js';
 import { getFullAnalysisPipeline } from '../providers/prompts/flow-analysis-prompts.js';
 import { buildPassPrompt } from '../providers/prompts/multipass-prompts.js';
 import { buildFlowAnalysisPrompt } from '../providers/prompts/flow-analysis-prompts.js';
+import { buildUnderstandingPrompt } from '../providers/prompts/understanding.js';
 import { getPassConfig } from './multipass-scanner.js';
 import { getFlowPassConfig } from './flow-analyzer.js';
 import { generateBugId } from './utils.js';
@@ -282,6 +283,120 @@ export class CoreScanner {
       this.report(`  Error: ${error.message}`);
       return [];
     }
+  }
+
+  /**
+   * Generate codebase understanding (for init/refresh commands)
+   * Uses the LLM to analyze project structure and extract features
+   */
+  async generateUnderstanding(files: string[], existingDocsSummary?: string): Promise<CodebaseUnderstanding> {
+    const cwd = process.cwd();
+
+    this.report(`\n════ GENERATING UNDERSTANDING ════`);
+    this.report(`  Provider: ${this.executor.name}`);
+    this.report(`  Files: ${files.length}`);
+
+    const prompt = buildUnderstandingPrompt({ existingDocsSummary });
+
+    try {
+      const result = await this.executor.runPrompt(prompt, {
+        cwd,
+        timeout: this.config.passTimeoutMs * 2, // Allow more time for understanding
+      });
+
+      const understanding = this.parseUnderstandingResponse(result.output, files);
+      this.report(`  Understanding complete`);
+
+      return understanding;
+    } catch (error: any) {
+      this.report(`  Error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse understanding response from LLM
+   */
+  private parseUnderstandingResponse(output: string, files: string[]): CodebaseUnderstanding {
+    // Try to extract JSON from <json></json> tags
+    const jsonMatch = output.match(/<json>([\s\S]*?)<\/json>/);
+    let parsed: any;
+
+    if (jsonMatch) {
+      try {
+        parsed = JSON.parse(jsonMatch[1]);
+      } catch {
+        // Try markdown code block
+        const codeBlockMatch = output.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (codeBlockMatch) {
+          parsed = JSON.parse(codeBlockMatch[1]);
+        }
+      }
+    } else {
+      // Try to find any JSON object
+      const jsonObjectMatch = output.match(/\{[\s\S]*\}/);
+      if (jsonObjectMatch) {
+        try {
+          parsed = JSON.parse(jsonObjectMatch[0]);
+        } catch {
+          // Continue with defaults
+        }
+      }
+    }
+
+    // Build understanding with defaults
+    const now = new Date().toISOString();
+
+    // Count lines (rough estimate from file count)
+    const estimatedLines = files.length * 150;
+
+    // Parse features
+    const features: FeatureIntent[] = (parsed?.features || []).map((f: any) => ({
+      name: String(f.name || 'Unknown'),
+      description: String(f.description || ''),
+      priority: this.parseFeaturePriority(f.priority),
+      constraints: Array.isArray(f.constraints) ? f.constraints.map(String) : [],
+      relatedFiles: Array.isArray(f.relatedFiles) ? f.relatedFiles.map(String) : [],
+    }));
+
+    // Parse contracts
+    const contracts: BehavioralContract[] = (parsed?.contracts || []).map((c: any) => ({
+      function: String(c.function || ''),
+      file: String(c.file || ''),
+      inputs: Array.isArray(c.inputs) ? c.inputs : [],
+      outputs: c.outputs || { type: 'unknown' },
+      invariants: Array.isArray(c.invariants) ? c.invariants.map(String) : [],
+      sideEffects: Array.isArray(c.sideEffects) ? c.sideEffects.map(String) : [],
+      throws: Array.isArray(c.throws) ? c.throws.map(String) : undefined,
+    }));
+
+    return {
+      version: '1',
+      generatedAt: now,
+      summary: {
+        framework: parsed?.summary?.framework || undefined,
+        language: parsed?.summary?.language || 'typescript',
+        type: parsed?.summary?.type || 'unknown',
+        description: parsed?.summary?.description || 'Project analyzed by whiterose',
+      },
+      features,
+      contracts,
+      dependencies: parsed?.dependencies || {},
+      structure: {
+        totalFiles: files.length,
+        totalLines: parsed?.structure?.totalLines || estimatedLines,
+        packages: parsed?.structure?.packages,
+      },
+    };
+  }
+
+  private parseFeaturePriority(value: any): 'critical' | 'high' | 'medium' | 'low' | 'ignore' {
+    const v = String(value).toLowerCase();
+    if (v === 'critical') return 'critical';
+    if (v === 'high') return 'high';
+    if (v === 'medium') return 'medium';
+    if (v === 'ignore') return 'ignore';
+    return 'low';
   }
 
   // ─────────────────────────────────────────────────────────────

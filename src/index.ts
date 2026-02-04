@@ -4,7 +4,9 @@
 export * from './types.js';
 export { loadConfig, loadUnderstanding, saveConfig } from './core/config.js';
 export { scanCodebase, getChangedFiles, getDependentFiles } from './core/scanner/index.js';
-export { getProvider, ClaudeCodeProvider, AiderProvider } from './providers/index.js';
+export { getExecutor, getAvailableExecutors } from './providers/index.js';
+export { CoreScanner } from './core/scanner.js';
+export type { PromptExecutor, PromptOptions, PromptResult } from './core/scanner.js';
 export { detectProvider, isProviderAvailable } from './providers/detect.js';
 export { runStaticAnalysis } from './analysis/static.js';
 export { outputSarif } from './output/sarif.js';

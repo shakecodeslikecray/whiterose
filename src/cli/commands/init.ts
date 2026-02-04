@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { WhiteroseConfig, ProviderType, CodebaseUnderstanding } from '../../types.js';
 import { detectProvider, getProviderCommand } from '../../providers/detect.js';
-import { getProvider } from '../../providers/index.js';
+import { getExecutor } from '../../providers/executors/index.js';
+import { CoreScanner } from '../../core/scanner.js';
 import { execa } from 'execa';
 import { scanCodebase } from '../../core/scanner/index.js';
 import { generateIntentDocument } from '../../core/contracts/intent.js';
@@ -167,19 +168,17 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   let understanding: CodebaseUnderstanding;
   try {
-    const provider = await getProvider(selectedProvider);
-
-    // Note: Read-only operations (init) always auto-approve via --dangerously-skip-permissions
-
-    // Set up progress callback to update spinner
-    if ('setProgressCallback' in provider) {
-      (provider as any).setProgressCallback((message: string) => {
-        understandingSpinner.message(message);
-      });
-    }
+    const executor = getExecutor(selectedProvider);
+    const scanner = new CoreScanner(executor, {}, {
+      onProgress: (message: string) => {
+        if (message.trim()) {
+          understandingSpinner.message(message);
+        }
+      },
+    });
 
     // Pass existing docs summary to merge with AI exploration
-    understanding = await provider.generateUnderstanding(codebaseFiles, docsSummary);
+    understanding = await scanner.generateUnderstanding(codebaseFiles, docsSummary);
 
     const totalTime = Math.floor((Date.now() - startTime) / 1000);
     understandingSpinner.stop(`Analysis complete (${totalTime}s)`);

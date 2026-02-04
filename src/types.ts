@@ -250,12 +250,7 @@ export type CacheState = z.infer<typeof CacheState>;
 // Provider Types
 // ─────────────────────────────────────────────────────────────
 
-export interface AnalysisContext {
-  files: string[];
-  understanding: CodebaseUnderstanding;
-  config?: WhiteroseConfig; // Optional for quick scan mode
-  staticAnalysisResults: StaticAnalysisResult[];
-}
+// NOTE: AnalysisContext removed - use ScanContext from CoreScanner instead
 
 export interface StaticAnalysisResult {
   tool: 'typescript' | 'eslint';
@@ -266,18 +261,8 @@ export interface StaticAnalysisResult {
   code?: string;
 }
 
-export interface AnalyzeOptions {
-  quick?: boolean; // Quick scan: parallel single-file analysis (for pre-commit hooks)
-}
-
-export interface LLMProvider {
-  name: ProviderType;
-  detect(): Promise<boolean>;
-  isAvailable(): Promise<boolean>;
-  analyze(context: AnalysisContext, options?: AnalyzeOptions): Promise<Bug[]>;
-  adversarialValidate(bug: Bug, context: AnalysisContext): Promise<AdversarialResult>;
-  generateUnderstanding(files: string[], existingDocsSummary?: string): Promise<CodebaseUnderstanding>;
-}
+// NOTE: LLMProvider interface removed - use PromptExecutor + CoreScanner instead
+// See src/core/scanner.ts for the new LSP-compliant architecture
 
 export interface AdversarialResult {
   survived: boolean;
