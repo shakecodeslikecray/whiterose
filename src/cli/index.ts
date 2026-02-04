@@ -67,6 +67,7 @@ program
   .option('--min-confidence <level>', 'Minimum confidence level to report', 'low')
   .option('--ci', 'CI mode: non-interactive, exit code 1 if bugs found (for CI/CD and git hooks)')
   .option('--quick', 'Quick scan: fast parallel analysis without init (for pre-commit hooks)')
+  .option('--phase <phase>', 'Run specific phase only: unit, integration, e2e, or all (default: all)')
   .action(scanCommand);
 
 // ─────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ program
 program
   .command('fix [bugId]')
   .description('Fix bugs interactively or by ID')
+  .option('-p, --provider <provider>', 'LLM provider to use for fixing')
   .option('--dry-run', 'Show proposed fixes without applying')
   .option('--branch <name>', 'Create fixes in a new branch')
   .option('--sarif <path>', 'Load bugs from an external SARIF file')

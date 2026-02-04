@@ -91,7 +91,7 @@ export const BugDetail: React.FC<BugDetailProps> = ({
         <TabButton label="1:Overview" active={activeTab === 'overview'} />
         <TabButton label="2:Code Path" active={activeTab === 'codepath'} />
         <TabButton label="3:Evidence" active={activeTab === 'evidence'} />
-        <TabButton label="4:Fix" active={activeTab === 'fix'} />
+        <TabButton label="4:Action" active={activeTab === 'fix'} />
       </Box>
 
       {/* Tab content */}
@@ -180,14 +180,17 @@ export const BugDetail: React.FC<BugDetailProps> = ({
 
         {activeTab === 'fix' && (
           <Box flexDirection="column">
-            <Text bold>Suggested Fix</Text>
-            {bug.suggestedFix ? (
-              <Box marginTop={1} flexDirection="column">
-                <Text color="green">{bug.suggestedFix}</Text>
+            <Text bold>Agentic Fix</Text>
+            <Box marginTop={1} flexDirection="column">
+              <Text color="cyan">Press [f] to start an AI-powered fix.</Text>
+              <Box marginTop={1}>
+                <Text color="gray">The AI will:</Text>
               </Box>
-            ) : (
-              <Text color="gray">No suggested fix available. Press [f] to generate one.</Text>
-            )}
+              <Text color="gray">  1. Read the file and understand the context</Text>
+              <Text color="gray">  2. Explore related files if needed</Text>
+              <Text color="gray">  3. Apply a fix directly to the code</Text>
+              <Text color="gray">  4. Show you the diff for review</Text>
+            </Box>
           </Box>
         )}
       </Box>

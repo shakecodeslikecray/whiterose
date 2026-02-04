@@ -8,6 +8,11 @@ import { FixConfirm } from './screens/FixConfirm.js';
 
 export type Screen = 'dashboard' | 'list' | 'detail' | 'fix';
 
+export interface FixResultInfo {
+  falsePositive: boolean;
+  falsePositiveReason?: string;
+}
+
 export interface AppState {
   screen: Screen;
   bugs: Bug[];
@@ -27,7 +32,7 @@ interface AppProps {
     dryRun: boolean;
     branch?: string;
   };
-  onFix: (bug: Bug) => Promise<void>;
+  onFix: (bug: Bug) => Promise<FixResultInfo>;
   onExit: () => void;
 }
 
@@ -97,27 +102,60 @@ export const App: React.FC<AppProps> = ({ bugs, config, fixOptions, onFix, onExi
   };
 
   const [fixError, setFixError] = useState<string | null>(null);
+  const [lastFixedBugId, setLastFixedBugId] = useState<string | null>(null);
 
-  const handleConfirmFix = async () => {
+  // Called when user confirms fix - does the fix and returns result info
+  const handleConfirmFix = async (): Promise<FixResultInfo> => {
     if (selectedBug) {
-      try {
-        setFixError(null);
-        await onFix(selectedBug);
-        // Move to next bug or back to list
-        if (state.selectedBugIndex < filteredBugs.length - 1) {
-          setState((s) => ({
-            ...s,
-            screen: 'detail',
-            selectedBugIndex: s.selectedBugIndex + 1,
-          }));
-        } else {
-          setState((s) => ({ ...s, screen: 'list' }));
-        }
-      } catch (error: any) {
-        setFixError(error.message || 'Fix failed');
-        setState((s) => ({ ...s, screen: 'detail' }));
-      }
+      setFixError(null);
+      setLastFixedBugId(selectedBug.id);
+      const result = await onFix(selectedBug);
+      // Don't change state here - let FixConfirm show success/false-positive first
+      return result;
     }
+    return { falsePositive: false };
+  };
+
+  // Called after user acknowledges fix success - updates state and moves to next bug
+  const handleFixComplete = () => {
+    if (!lastFixedBugId) return;
+
+    setState((s) => {
+      const newBugs = s.bugs.filter((b) => b.id !== lastFixedBugId);
+
+      // Recalculate filtered bugs with new state
+      const newFiltered = s.selectedCategory
+        ? newBugs.filter((b) => {
+            if (s.selectedCategory?.startsWith('kind:')) {
+              const kind = s.selectedCategory.split(':')[1];
+              return b.kind === kind;
+            }
+            return b.category === s.selectedCategory || b.severity === s.selectedCategory;
+          })
+        : newBugs;
+
+      // Go back to list if no more bugs in current filter
+      if (newFiltered.length === 0) {
+        return {
+          ...s,
+          bugs: newBugs,
+          screen: 'list' as Screen,
+          selectedBugIndex: 0,
+        };
+      }
+
+      // Stay at same index (now showing next bug) or adjust if at end
+      const newIndex = Math.min(s.selectedBugIndex, newFiltered.length - 1);
+
+      return {
+        ...s,
+        bugs: newBugs,
+        screen: 'detail' as Screen,
+        selectedBugIndex: newIndex,
+      };
+    });
+
+    setLastFixedBugId(null);
   };
 
   const handleCancelFix = () => {
@@ -200,6 +238,7 @@ export const App: React.FC<AppProps> = ({ bugs, config, fixOptions, onFix, onExi
           dryRun={fixOptions.dryRun}
           onConfirm={handleConfirmFix}
           onCancel={handleCancelFix}
+          onFixComplete={handleFixComplete}
         />
       )}
 

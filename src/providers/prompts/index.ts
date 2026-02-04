@@ -64,3 +64,34 @@ export {
   buildCategoryFocusedPrompt,
   type AgenticScanContext,
 } from './agentic-scan.js';
+
+export {
+  buildPassPrompt,
+  buildAdversarialPassPrompt,
+  buildHumanReadableSummaryPrompt,
+  getPassOrderForProject,
+  SEVERITY_THRESHOLDS,
+  type PassPromptContext,
+} from './multipass-prompts.js';
+
+export {
+  buildFlowAnalysisPrompt,
+  buildAttackChainPrompt,
+  buildFlowValidationPrompt,
+  getFullAnalysisPipeline,
+  type FlowPromptContext,
+} from './flow-analysis-prompts.js';
+
+// Smart Scanner (10x faster approach)
+export {
+  buildTriagePrompt,
+  buildValidationPrompt,
+  buildDeepDivePrompt,
+  selectDeepDives,
+  mergeAndDedupe,
+  type TriageResult,
+  type SuspiciousArea,
+  type ValidationResult,
+  type DeepDiveResult,
+  type SmartScanResult,
+} from '../../core/smart-scanner.js';

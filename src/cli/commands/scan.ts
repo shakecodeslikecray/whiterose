@@ -2,14 +2,16 @@ import * as p from '@clack/prompts';
 import chalk from 'chalk';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { WhiteroseConfig, ScanResult, Bug, ConfidenceLevel } from '../../types.js';
+import { WhiteroseConfig, ScanResult, Bug, ConfidenceLevel, ProviderType } from '../../types.js';
 import { loadConfig, loadUnderstanding } from '../../core/config.js';
-import { getProvider } from '../../providers/index.js';
+import { CoreScanner } from '../../core/scanner.js';
+import { getExecutor } from '../../providers/executors/index.js';
 import { scanCodebase, getChangedFiles, saveFileHashes } from '../../core/scanner/index.js';
 import { runStaticAnalysis } from '../../analysis/static.js';
 import { generateBugId } from '../../core/utils.js';
 import { outputSarif } from '../../output/sarif.js';
 import { outputMarkdown } from '../../output/markdown.js';
+import { outputHumanReadableMarkdown } from '../../output/human-readable.js';
 import { mergeBugs, getAccumulatedBugsStats } from '../../core/bug-merger.js';
 import { analyzeCrossFile } from '../../core/cross-file-analyzer.js';
 import { analyzeContracts } from '../../core/contract-analyzer.js';
@@ -26,6 +28,7 @@ interface ScanOptions {
   ci?: boolean; // CI mode: non-interactive, exit 1 if bugs found
   quick?: boolean; // Quick scan: parallel single-file analysis, works without init
   unsafe?: boolean; // Deprecated: read-only operations always auto-approve
+  phase?: 'unit' | 'integration' | 'e2e' | 'all'; // Which analysis phase to run
 }
 
 export async function scanCommand(paths: string[], options: ScanOptions): Promise<void> {
@@ -143,13 +146,20 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
   }
 
   // ─────────────────────────────────────────────────────────────
-  // LLM Analysis
+  // LLM Analysis (using CoreScanner - LSP-compliant architecture)
   // ─────────────────────────────────────────────────────────────
-  const providerName = options.provider || config?.provider || 'claude-code';
-  const provider = await getProvider(providerName as any);
+  const providerName = (options.provider || config?.provider || 'claude-code') as ProviderType;
 
-  // Note: Read-only operations (scan) always auto-approve via --dangerously-skip-permissions
-  // The unsafe flag is only relevant for fix operations
+  // Get the executor (simple prompt runner) for the selected provider
+  const executor = getExecutor(providerName);
+
+  // Check if provider is available
+  if (!await executor.isAvailable()) {
+    if (!isQuiet) {
+      p.log.error(`Provider ${providerName} is not available. Is it installed?`);
+    }
+    process.exit(1);
+  }
 
   let bugs: Bug[];
   if (!isQuiet) {
@@ -157,21 +167,54 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
     const analysisStartTime = Date.now();
     llmSpinner.start(`Analyzing with ${providerName}...`);
 
-    // Hook into provider's progress callback to show real-time updates
-    if ('setProgressCallback' in provider) {
-      (provider as any).setProgressCallback((message: string) => {
-        // Show the progress message (file being scanned, bugs found, etc.)
-        llmSpinner.message(message);
-      });
-    }
+    // Create scanner with progress callback
+    const scanner = new CoreScanner(executor, {}, {
+      onProgress: (message: string) => {
+        // Stop spinner and print all progress messages
+        // This ensures users see batch status, pass results, etc.
+        if (message.trim()) {
+          llmSpinner.stop('');
+
+          // Color code based on content
+          if (message.includes('════')) {
+            console.log(chalk.cyan(message));
+          } else if (message.includes('✓')) {
+            console.log(chalk.green(message));
+          } else if (message.includes('✗')) {
+            console.log(chalk.red(message));
+          } else if (message.includes('[Batch')) {
+            console.log(chalk.yellow(message));
+          } else {
+            console.log(chalk.dim(message));
+          }
+
+          llmSpinner.start('Scanning...');
+        }
+      },
+      onBugFound: (bug: Bug) => {
+        llmSpinner.stop('');
+        console.log(chalk.magenta(`  ★ Found: ${bug.title} (${bug.severity})`));
+        llmSpinner.start('Scanning...');
+      },
+    });
 
     try {
-      bugs = await provider.analyze({
-        files: filesToScan,
-        understanding,
-        config,
-        staticAnalysisResults: staticResults,
-      }, { quick: isQuickScan });
+      // Use quickScan for --quick/--ci, full scan otherwise
+      if (isQuickScan) {
+        bugs = await scanner.quickScan({
+          files: filesToScan,
+          understanding,
+          staticResults: staticResults || [],
+          config,
+        });
+      } else {
+        bugs = await scanner.scan({
+          files: filesToScan,
+          understanding,
+          staticResults: staticResults || [],
+          config,
+        });
+      }
       const totalTime = Math.floor((Date.now() - analysisStartTime) / 1000);
       llmSpinner.stop(`Found ${bugs.length} potential bugs (${totalTime}s)`);
     } catch (error) {
@@ -180,12 +223,23 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
       process.exit(1);
     }
   } else {
-    bugs = await provider.analyze({
-      files: filesToScan,
-      understanding,
-      config,
-      staticAnalysisResults: staticResults,
-    }, { quick: isQuickScan });
+    const scanner = new CoreScanner(executor);
+
+    if (isQuickScan) {
+      bugs = await scanner.quickScan({
+        files: filesToScan,
+        understanding,
+        staticResults: staticResults || [],
+        config,
+      });
+    } else {
+      bugs = await scanner.scan({
+        files: filesToScan,
+        understanding,
+        staticResults: staticResults || [],
+        config,
+      });
+    }
   }
 
   // Note: Adversarial validation is now inline during analysis
@@ -369,17 +423,22 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
 
     const timestamp = new Date().toISOString().split('T')[0];
 
-    // Always save all three formats
-    // 1. Markdown
+    // Always save all formats
+    // 1. Technical Markdown
     const markdown = outputMarkdown(result);
     const mdPath = join(outputDir, 'bugs.md');
     writeFileSync(mdPath, markdown);
 
-    // 2. SARIF
+    // 2. Human-Readable Markdown (tester-friendly)
+    const humanReadable = outputHumanReadableMarkdown(result);
+    const humanPath = join(outputDir, 'bugs-human.md');
+    writeFileSync(humanPath, humanReadable);
+
+    // 3. SARIF
     const sarifPath = join(outputDir, 'bugs.sarif');
     writeFileSync(sarifPath, JSON.stringify(outputSarif(result), null, 2));
 
-    // 3. JSON
+    // 4. JSON
     const jsonPath = join(outputDir, 'bugs.json');
     writeFileSync(jsonPath, JSON.stringify(result, null, 2));
 
@@ -406,7 +465,8 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
 
     // Show saved files
     p.log.success('Reports saved:');
-    console.log(`  ${chalk.dim('├')} ${chalk.cyan(mdPath)}`);
+    console.log(`  ${chalk.dim('├')} ${chalk.cyan(humanPath)} ${chalk.dim('(tester-friendly)')}`);
+    console.log(`  ${chalk.dim('├')} ${chalk.cyan(mdPath)} ${chalk.dim('(technical)')}`);
     console.log(`  ${chalk.dim('├')} ${chalk.cyan(sarifPath)}`);
     console.log(`  ${chalk.dim('└')} ${chalk.cyan(jsonPath)}`);
     console.log();

@@ -2,7 +2,6 @@
 
 [![npm version](https://img.shields.io/npm/v/@shakecodeslikecray/whiterose.svg)](https://www.npmjs.com/package/@shakecodeslikecray/whiterose)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20NC%201.0-blue.svg)](LICENSE)
-[![Test Coverage](https://img.shields.io/badge/coverage-93%25-brightgreen.svg)]()
 
 > "I've been staring at your code for a long time."
 
@@ -17,198 +16,40 @@ AI-powered bug hunter that uses your existing LLM subscription. No API keys need
  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝
 ```
 
+---
+
+## Table of Contents
+
+- [Why whiterose?](#why-whiterose)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Commands](#commands)
+- [Architecture](#architecture)
+  - [Three-Layer Architecture](#three-layer-architecture)
+  - [19-Pass Pipeline](#19-pass-pipeline)
+  - [LSP-Compliant Provider Abstraction](#lsp-compliant-provider-abstraction)
+  - [Static Analysis Integration](#static-analysis-integration)
+- [Configuration](#configuration)
+- [Bug Categories](#bug-categories)
+- [Output Formats](#output-formats)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
 ## Why whiterose?
 
 You're already paying for Claude Code Max, Cursor, Codex, or similar AI coding tools. Why pay again for bug detection APIs?
 
-whiterose piggybacks on your existing subscription to find bugs in your code. Zero additional cost.
+whiterose piggybacks on your existing subscription to find bugs in your code. **Zero additional cost.**
 
-## Features
-
-- **Leverages Existing AI Agents**: Uses Claude Code, Aider, or other LLM CLI tools you already have
-- **Real-Time Progress**: See exactly which files are being analyzed as it happens
-- **Grounded in Reality**: Uses static analysis (tsc, eslint) as signals. Requires code path traces.
-- **Intent-Aware**: Merges your existing documentation with AI-generated understanding
-- **Provider Agnostic**: Works with Claude Code, Aider, Codex, and more
-- **Fix Any Bug**: Fix whiterose-found bugs, import from SARIF files, GitHub issues, or describe manually
-- **Interactive Menu**: Just run `whiterose` to get started
-
----
-
-## Three-Layer Architecture
-
-whiterose operates in three distinct layers:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    LAYER 0: DOCUMENTATION                           │
-│                         (whiterose init)                            │
-│                                                                     │
-│  Reads existing docs:               AI generates understanding:     │
-│  - README.md                        - Project type                  │
-│  - package.json                     - Framework detection           │
-│  - CONTRIBUTING.md                  - Feature extraction            │
-│  - .env.example                     - Behavioral contracts          │
-│  - API docs                         - Architecture mapping          │
-│                                                                     │
-│  Output: .whiterose/intent.md + .whiterose/cache/understanding.json │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    LAYER 1: BUG FINDING                             │
-│                        (whiterose scan)                             │
-│                                                                     │
-│  1. Load understanding from Layer 0                                 │
-│  2. Run static analysis (tsc, eslint) as pre-filter                 │
-│  3. Spawn LLM agent to explore codebase                             │
-│  4. Stream progress in real-time                                    │
-│  5. Collect bugs with evidence and code paths                       │
-│                                                                     │
-│  Output: .whiterose/reports/*.sarif + BUGS.md                       │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    LAYER 2: BUG FIXING                              │
-│                         (whiterose fix)                             │
-│                                                                     │
-│  Bug Sources:                       Fix Actions:                    │
-│  - whiterose scan results           - Interactive TUI               │
-│  - External SARIF files             - Single bug by ID              │
-│  - GitHub issues                    - Dry-run preview               │
-│  - Manual description               - Branch creation               │
-│                                                                     │
-│  Output: Fixed code + commits                                       │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Architecture: How whiterose Actually Works
-
-**This section is critical to understanding what whiterose is and isn't.**
-
-### What whiterose IS
-
-whiterose is an **orchestrator/wrapper** that:
-1. Spawns an LLM CLI tool (like Claude Code) as a subprocess
-2. Passes it a specialized prompt with a communication protocol
-3. Streams and parses the LLM's output in real-time
-4. Displays progress to the user
-5. Collects and formats bug reports
-
-### What whiterose IS NOT
-
-whiterose is **NOT** a custom AI agent with its own tool-calling loop. It does not:
-- Make direct API calls to Claude/OpenAI/etc.
-- Define or execute its own tools
-- Implement an LLM-in-a-loop architecture itself
-
-### The Real Agent: Your LLM Provider
-
-The actual "agent" is **Claude Code** (or Aider, etc.). These tools have their own internal agentic architecture:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         CLAUDE CODE                                 │
-│                    (The Actual AI Agent)                            │
-│                                                                     │
-│   Claude Code runs an internal agent loop:                          │
-│                                                                     │
-│     while (task not complete):                                      │
-│       1. LLM decides what to do next                                │
-│       2. LLM issues a tool call (Read, Glob, Grep, Bash, etc.)      │
-│       3. Claude Code executes the tool locally                      │
-│       4. Tool result is sent back to the LLM                        │
-│       5. LLM processes result and decides next action               │
-│       6. Repeat until done                                          │
-│                                                                     │
-│   Built-in Tools:                                                   │
-│     - Read: Read file contents                                      │
-│     - Glob: Find files by pattern                                   │
-│     - Grep: Search file contents                                    │
-│     - Bash: Execute shell commands                                  │
-│     - Write/Edit: Modify files                                      │
-│     - Task: Spawn sub-agents                                        │
-│     - And more...                                                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### The Complete Flow
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          USER                                       │
-│                     runs: whiterose scan                            │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        WHITEROSE CLI                                │
-│                                                                     │
-│  1. Loads config from .whiterose/config.yml                         │
-│  2. Loads codebase understanding from cache                         │
-│  3. Runs static analysis (tsc, eslint) as pre-filter                │
-│  4. Spawns Claude Code as subprocess:                               │
-│                                                                     │
-│     claude --dangerously-skip-permissions -p "<prompt>"             │
-│                                                                     │
-│  5. Streams stdout from Claude Code                                 │
-│  6. Parses protocol markers in real-time                            │
-│  7. Updates UI with progress                                        │
-│  8. Collects bug reports                                            │
-│  9. Outputs SARIF + Markdown reports                                │
-│                                                                     │
-└─────────────────────────────────┬───────────────────────────────────┘
-                                  │ spawns
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                       CLAUDE CODE                                   │
-│                   (runs autonomously)                               │
-│                                                                     │
-│  Receives prompt telling it to:                                     │
-│  - Explore the codebase                                             │
-│  - Find bugs in specific categories                                 │
-│  - Output progress using protocol markers                           │
-│  - Output bugs as JSON                                              │
-│                                                                     │
-│  Claude Code then:                                                  │
-│  - Uses its Read tool to examine files                              │
-│  - Uses Glob/Grep to find relevant code                             │
-│  - Analyzes code for bugs                                           │
-│  - Outputs markers that whiterose parses                            │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### The Communication Protocol
-
-whiterose and the LLM communicate via stdout using protocol markers:
-
-```
-###SCANNING:src/api/users.ts       <- LLM is about to analyze this file
-###SCANNING:src/api/auth.ts        <- LLM moved to next file
-###BUG:{"file":"src/api/users.ts","line":42,"title":"Null dereference",...}
-###SCANNING:src/hooks/useCart.ts   <- LLM continues exploring
-###BUG:{"file":"src/hooks/useCart.ts","line":17,"title":"Missing await",...}
-###COMPLETE                         <- LLM finished analysis
-```
-
-whiterose parses these markers in real-time to:
-- Show progress: "Scanning: src/api/users.ts"
-- Show findings: "Found: Null dereference (high)"
-- Collect bugs for the final report
-
-### Why This Architecture?
-
-1. **No API Keys Needed**: Uses CLI tools you already have installed and authenticated
-2. **Zero Extra Cost**: Piggybacks on your existing subscriptions (Claude Max, etc.)
-3. **Real Progress**: Streaming output shows exactly what's happening
-4. **Leverages Existing Agents**: Claude Code already knows how to explore codebases intelligently
-5. **Respects .gitignore**: Claude Code automatically ignores files you don't want scanned
-6. **No Token Limits**: Claude Code reads files on-demand, not all at once
+| Feature | whiterose | Traditional SAST |
+|---------|-----------|------------------|
+| Cost | $0 (uses existing subscription) | $100-500/mo |
+| Setup | `npm install -g` | Complex integrations |
+| False positives | Low (LLM understands context) | High (pattern matching) |
+| Fix generation | Yes (agentic) | No |
+| Provider lock-in | None (works with any LLM CLI) | Vendor-specific |
 
 ---
 
@@ -218,18 +59,18 @@ whiterose parses these markers in real-time to:
 npm install -g @shakecodeslikecray/whiterose
 ```
 
-The CLI command is `whiterose` (no scope prefix needed).
-
 ### Prerequisites
 
-You need at least one of these LLM CLI tools installed:
+You need at least one LLM CLI tool installed:
 
 | Provider | Installation | Status |
 |----------|-------------|--------|
-| Claude Code | `npm install -g @anthropic-ai/claude-code` | Ready |
-| Aider | `pip install aider-chat` | Coming Soon |
-| Codex | OpenAI CLI | Coming Soon |
-| Gemini | Google CLI | Coming Soon |
+| Claude Code | `npm install -g @anthropic-ai/claude-code` | ✅ Ready |
+| Codex | `npm install -g @openai/codex` | ✅ Ready |
+| Gemini | `npm install -g @google/gemini-cli` | ✅ Ready |
+| Aider | `pip install aider-chat` | ✅ Ready |
+
+---
 
 ## Quick Start
 
@@ -238,139 +79,99 @@ You need at least one of these LLM CLI tools installed:
 whiterose
 
 # Or use commands directly:
-whiterose init    # Initialize (explores codebase, generates understanding)
-whiterose scan    # Scan for bugs
-whiterose fix     # Fix bugs interactively
+whiterose init              # Initialize (explores codebase, generates understanding)
+whiterose scan              # Scan for bugs (19-pass pipeline)
+whiterose scan --quick      # Quick scan (single pass, for pre-commit)
+whiterose fix               # Fix bugs interactively
 ```
 
-Running `whiterose` without arguments shows an interactive menu:
+**Example output:**
 
 ```
-██╗    ██╗██╗  ██╗██╗████████╗███████╗██████╗  ██████╗ ███████╗███████╗
-...
+┌  whiterose - thorough scan
+│
+◇  Found 64 files to scan
+◇  Static analysis: 37 signals found
 
-  Project: my-app
-  Status: initialized
+════ CORE SCANNER (PIPELINE MODE) ════
+  Provider: claude-code
+  Passes: 19 (9 unit → 5 integration → 5 E2E)
+  Findings flow: Unit → Integration → E2E
 
-? What would you like to do?
-  > Scan       find bugs in the codebase
-    Fix        fix bugs interactively
-    Status     show current status
-    Report     generate bug report
-    Refresh    rebuild codebase understanding
-    Help       show all commands
-    Exit
+════ PHASE 1: UNIT ANALYSIS ════
+  Looking for: injection, null refs, auth bypass, etc.
+  [Batch 1/2] injection, auth-bypass, null-safety, type-safety, resource-leaks
+    ✓ injection: 2 bugs
+    ✓ auth-bypass: 0 bugs
+    ✓ null-safety: 1 bugs
+    ...
+
+════ PHASE 2: INTEGRATION ANALYSIS ════
+  Building on 5 unit findings
+  Looking for: auth flows, data flows, trust boundaries
+    ✓ auth-flow-trace: 1 bugs
+    ...
+
+════ PHASE 3: E2E ANALYSIS ════
+  Building on 5 unit + 2 integration findings
+  Looking for: attack chains, privilege escalation
+    ✓ attack-chain-analysis: 1 bugs
+    ...
+
+════ SCAN COMPLETE ════
+  Duration: 4m 32s
+  Unit: 5 → Integration: 2 → E2E: 1
+  Final bugs: 7
 ```
+
+---
 
 ## Commands
 
 ### `whiterose init`
 
-First-time setup. whiterose will:
-1. Detect available LLM providers (claude-code, aider, codex, etc.)
-2. Ask you to select one
-3. Read existing documentation (README, package.json, CONTRIBUTING, etc.)
-4. Spawn the LLM to explore and understand your codebase
-5. Merge existing docs with AI-generated understanding
-6. Show real-time progress as files are examined
-7. Create `.whiterose/` directory with config and understanding
+First-time setup. Explores your codebase and generates understanding.
 
-**What you'll see:**
+```bash
+whiterose init
 ```
-whiterose - initialization
 
-✓ Detected providers: claude-code, aider
-? Which LLM provider should whiterose use?
-  > claude-code (recommended)
-    aider
-
-✓ Found existing docs: README, package.json, .env.example
-Examining: src/index.ts
-Examining: src/api/users.ts
-...
-✓ Analysis complete (45s)
-
-Here's what I understand about your codebase:
-
-  Type: E-commerce Application
-  Framework: Next.js
-  Language: TypeScript
-  Files: 127
-  Lines: 15,234
-
-? Is this understanding accurate? Yes
-
-whiterose initialized successfully!
-```
+Creates `.whiterose/` directory with:
+- `config.yml` - Configuration
+- `intent.md` - Behavioral contracts (editable)
+- `cache/understanding.json` - AI-generated codebase understanding
 
 ### `whiterose scan`
 
-Find bugs. Uses incremental scanning by default (only changed files).
+Find bugs using the 19-pass pipeline.
 
 ```bash
-whiterose scan              # Incremental scan
-whiterose scan --full       # Full scan
-whiterose scan --json       # JSON output
-whiterose scan src/api/     # Scan specific path
-whiterose scan --unsafe     # Bypass LLM permission prompts
-```
-
-**What you'll see:**
-```
-whiterose - scanning for bugs
-
-Scanning: src/api/users.ts
-Scanning: src/api/auth.ts
-Found: Null dereference in getUserById (high)
-Scanning: src/hooks/useCart.ts
-Found: Missing await in checkout (medium)
-...
-Analysis complete. Found 3 bugs.
-
-Scan Results
-
-  ● Critical: 0
-  ● High: 1
-  ● Medium: 2
-  ● Low: 0
-
-  Total: 3 bugs found
+whiterose scan                    # Incremental scan (changed files only)
+whiterose scan --full             # Full scan (all files)
+whiterose scan --quick            # Quick scan (single pass, fast)
+whiterose scan --provider codex   # Use specific provider
+whiterose scan --json             # JSON output
+whiterose scan --ci               # CI mode (exit 1 if bugs found)
+whiterose scan src/api/           # Scan specific path
 ```
 
 ### `whiterose fix`
 
-Interactive TUI for reviewing and fixing bugs. Supports multiple bug sources.
+Interactive TUI for reviewing and fixing bugs.
 
 ```bash
-# From whiterose scan results (default)
-whiterose fix               # Interactive dashboard
-whiterose fix WR-001        # Fix specific bug
-whiterose fix --dry-run     # Preview fixes without applying
-whiterose fix --branch fix/bugs   # Create fixes in new branch
+whiterose fix                     # Interactive dashboard
+whiterose fix WR-001              # Fix specific bug by ID
+whiterose fix --dry-run           # Preview without applying
+whiterose fix --provider claude-code  # Use specific provider
 
-# From external SARIF file
-whiterose fix --sarif ./reports/semgrep.sarif
-
-# From GitHub issue
+# External bug sources:
+whiterose fix --sarif ./semgrep.sarif      # Import from SARIF
 whiterose fix --github https://github.com/owner/repo/issues/123
-
-# Manually describe a bug
-whiterose fix --describe
+whiterose fix --describe                    # Manually describe a bug
 ```
 
-**External Bug Sources:**
-
-| Source | Option | Description |
-|--------|--------|-------------|
-| whiterose scan | (default) | Bugs from latest scan in `.whiterose/reports/` |
-| External SARIF | `--sarif <path>` | Import bugs from any SARIF-compatible tool |
-| GitHub Issue | `--github <url>` | Parse bug from GitHub issue (requires `gh` CLI) |
-| Manual | `--describe` | Interactive prompts to describe a bug |
-
-When using `--github`, whiterose:
-- Extracts file path and line number from issue body (if present)
-- Determines severity from labels (critical, security, bug, etc.)
-- Prompts for missing information
+**Agentic Fix:** whiterose uses an agentic approach - the LLM reads the code, explores context, and applies fixes directly. It can also detect false positives during fix and notify you.
 
 ### `whiterose refresh`
 
@@ -380,9 +181,196 @@ Rebuild codebase understanding from scratch.
 
 Show current status (provider, cache, last scan).
 
-### `whiterose report`
+---
 
-Generate bug report from last scan.
+## Architecture
+
+This section explains how whiterose works internally. **Critical reading for contributors.**
+
+### Three-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    LAYER 0: UNDERSTANDING                           │
+│                         (whiterose init)                            │
+│                                                                     │
+│  Input:                           Output:                           │
+│  - README.md, package.json        - .whiterose/intent.md            │
+│  - CONTRIBUTING.md                - .whiterose/cache/understanding  │
+│  - Existing documentation         - Project type, framework, etc.   │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    LAYER 1: BUG FINDING                             │
+│                        (whiterose scan)                             │
+│                                                                     │
+│  1. Load understanding from Layer 0                                 │
+│  2. Run static analysis (tsc, eslint)                               │
+│  3. Run 19-pass LLM pipeline (Unit → Integration → E2E)             │
+│  4. Deduplicate and merge findings                                  │
+│  5. Output reports (SARIF, Markdown, JSON)                          │
+└─────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    LAYER 2: BUG FIXING                              │
+│                         (whiterose fix)                             │
+│                                                                     │
+│  1. Load bugs from scan results (or external sources)               │
+│  2. Interactive TUI for review                                      │
+│  3. Agentic fix (LLM explores and fixes)                            │
+│  4. False positive detection during fix                             │
+│  5. Commit changes                                                  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 19-Pass Pipeline
+
+whiterose runs **19 specialized passes** organized into 3 phases, with findings flowing through:
+
+```
+Static Analysis (tsc/eslint)
+           │
+           ▼
+     staticResults ─────────────────────────────────────┐
+           │                                            │
+           ▼                                            │
+════ PHASE 1: UNIT ANALYSIS (9 passes) ════            │
+│                                                      │
+│  Each pass focuses on ONE bug category:              │
+│  1. injection      - SQL, XSS, command injection     │
+│  2. auth-bypass    - Missing/broken auth checks      │
+│  3. null-safety    - Null/undefined dereference      │
+│  4. type-safety    - Type coercion bugs              │
+│  5. resource-leaks - Unclosed handles, listeners     │
+│  6. async-issues   - Missing await, race conditions  │
+│  7. data-validation - Input validation gaps          │
+│  8. secrets-exposure - Hardcoded secrets, leaks      │
+│  9. logic-errors   - Off-by-one, wrong operators     │
+│                                                      │
+│  Runs in batches of 5 (parallel within batch)        │
+└──────────────────────────────────────────────────────┘
+           │
+           ▼
+      unitFindings ─────────────────────────────┐
+           │                                    │
+           ▼                                    ▼
+════ PHASE 2: INTEGRATION ANALYSIS (5 passes) ════
+│  Input: staticResults + unitFindings         │
+│                                              │
+│  Prompt includes previous findings:          │
+│  "## PREVIOUS FINDINGS TO BUILD ON           │
+│   - [high] SQL injection at api.ts:42        │
+│   - [medium] Missing auth at routes.ts:15"   │
+│                                              │
+│  Passes:                                     │
+│  1. auth-flow-trace      - Auth across files │
+│  2. data-flow-trace      - Data propagation  │
+│  3. validation-boundary  - Trust boundaries  │
+│  4. error-propagation    - Error handling    │
+│  5. trust-boundary-trace - Security bounds   │
+└──────────────────────────────────────────────┘
+           │
+           ▼
+   integrationFindings ─────────────────┐
+           │                            │
+           ▼                            ▼
+════ PHASE 3: E2E ANALYSIS (5 passes) ════
+│  Input: staticResults + unitFindings │
+│         + integrationFindings        │
+│                                      │
+│  Builds attack chains from ALL       │
+│  previous findings.                  │
+│                                      │
+│  Passes:                             │
+│  1. attack-chain-analysis            │
+│  2. privilege-escalation-trace       │
+│  3. session-lifecycle-trace          │
+│  4. user-journey-simulation          │
+│  5. api-contract-verification        │
+└──────────────────────────────────────┘
+           │
+           ▼
+════ POST-PROCESSING ════
+│  1. Combine all findings             │
+│  2. Deduplicate (file:line:category) │
+│  3. Merge similar (within 5 lines)   │
+└──────────────────────────────────────┘
+           │
+           ▼
+      Final Bugs
+```
+
+### LSP-Compliant Provider Abstraction
+
+whiterose follows the **Liskov Substitution Principle** - all providers are interchangeable and get the same 19-pass scanning.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      CoreScanner                                 │
+│  src/core/scanner.ts                                            │
+│  ─────────────────────────────────────────────────────────────  │
+│  • 19-pass pipeline logic                                       │
+│  • Batching (5 parallel, 2s delay)                              │
+│  • Phase dependencies (Unit → Integration → E2E)                │
+│  • Deduplication & merging                                      │
+│  • Progress callbacks                                           │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ executor.runPrompt(prompt)
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│               PromptExecutor (interface)                         │
+│  src/core/scanner.ts                                            │
+│  ─────────────────────────────────────────────────────────────  │
+│  interface PromptExecutor {                                     │
+│    name: string;                                                │
+│    isAvailable(): Promise<boolean>;                             │
+│    runPrompt(prompt: string, options: PromptOptions):           │
+│      Promise<PromptResult>;                                     │
+│  }                                                              │
+└─────────────────────────────────────────────────────────────────┘
+         │              │              │              │
+         ▼              ▼              ▼              ▼
+   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+   │ claude   │  │  codex   │  │  gemini  │  │  aider   │
+   │  -code   │  │          │  │          │  │          │
+   └──────────┘  └──────────┘  └──────────┘  └──────────┘
+   executors/    executors/    executors/    executors/
+```
+
+**Adding a new provider is trivial** - just implement the `PromptExecutor` interface (~30 lines).
+
+### Static Analysis Integration
+
+Static analysis runs **first**, deterministically, before any LLM passes:
+
+```typescript
+// In scan.ts
+staticResults = await runStaticAnalysis(cwd, filesToScan, config);
+
+// Passed to CoreScanner
+const bugs = await scanner.scan({
+  files: filesToScan,
+  understanding,
+  staticResults,  // ← Every pass sees this
+});
+```
+
+Each LLM pass receives static analysis signals in its prompt:
+
+```
+## STATIC ANALYSIS SIGNALS (from tsc/eslint)
+- typescript: src/api.ts:42 - TS2532: Object is possibly 'undefined'
+- eslint: src/db.ts:15 - @typescript-eslint/no-explicit-any
+
+NOTE: Static tools already verified control flow. Don't report issues they would catch.
+```
+
+This reduces false positives - the LLM knows what tsc/eslint already flagged.
+
+---
 
 ## Configuration
 
@@ -390,29 +378,35 @@ Generate bug report from last scan.
 
 ```yaml
 version: "1"
-provider: claude-code
+provider: claude-code  # or codex, gemini, aider
 
 include:
   - "**/*.ts"
   - "**/*.tsx"
+  - "**/*.js"
+  - "**/*.jsx"
 
 exclude:
   - node_modules
   - dist
   - "**/*.test.*"
+  - "**/*.spec.*"
 
 priorities:
   src/api/checkout.ts: critical
   src/auth/: high
 
 categories:
-  - logic-error
-  - security
-  - async-race-condition
-  - edge-case
+  - injection
+  - auth-bypass
   - null-reference
+  - logic-error
+  - async-issue
+  - resource-leak
+  - data-validation
+  - secrets-exposure
 
-minConfidence: low
+minConfidence: low  # low, medium, high
 
 staticAnalysis:
   typescript: true
@@ -421,67 +415,32 @@ staticAnalysis:
 output:
   sarif: true
   markdown: true
+  sarifPath: .whiterose/reports
+  markdownPath: BUGS.md
 ```
-
-## Intent Document
-
-`.whiterose/intent.md` describes your app's intent and behavioral contracts:
-
-```markdown
-# App Intent: acme-store
-
-## Overview
-E-commerce platform for selling widgets.
-
-## Critical Features
-
-### Checkout [CRITICAL]
-Must never double-charge. Must handle payment failures gracefully.
-
-**Constraints:**
-- Create order record before charging payment
-- Rollback order if charge fails
 
 ---
-
-## Behavioral Contracts
-
-### `src/api/checkout.ts:processPayment()`
-
-**Inputs:**
-- `cartId`: string
-- `paymentMethod`: stripe | paypal
-
-**Returns:** `PaymentResult`
-
-**Invariants:**
-- Must not charge if inventory unavailable
-- Must create order before charging
-- Must rollback if charge fails
-```
-
-## Supported Providers
-
-| Provider | Status | Notes |
-|----------|--------|-------|
-| Claude Code | Ready | Recommended. Uses Max subscription. |
-| Aider | Coming Soon | Will support when implemented |
-| Codex | Coming Soon | Will support when implemented |
-| Gemini | Coming Soon | Will support when implemented |
-| Ollama | Coming Soon | Local LLMs |
 
 ## Bug Categories
 
 whiterose looks for bugs in these categories:
 
-- **logic-error**: Off-by-one errors, wrong operators, incorrect conditions
-- **null-reference**: Accessing properties on potentially null/undefined values
-- **security**: Injection, auth bypass, XSS, data exposure
-- **async-race-condition**: Missing await, unhandled promises, race conditions
-- **edge-case**: Empty arrays, zero values, boundary conditions
-- **resource-leak**: Unclosed connections, event listener leaks
-- **type-coercion**: Loose equality bugs, implicit conversions
-- **intent-violation**: Code that violates documented business rules
+| Category | Description | Example |
+|----------|-------------|---------|
+| `injection` | SQL, XSS, command injection | `db.query("SELECT * FROM users WHERE id=" + userId)` |
+| `auth-bypass` | Missing/broken authentication | Route handler without auth middleware |
+| `null-reference` | Null/undefined dereference | `user.profile.name` when `profile` might be null |
+| `logic-error` | Off-by-one, wrong operators | `i <= arr.length` instead of `i < arr.length` |
+| `async-issue` | Missing await, race conditions | `const data = fetchData(); use(data);` |
+| `resource-leak` | Unclosed handles, listeners | `db.connect()` without `db.close()` |
+| `data-validation` | Input validation gaps | Missing sanitization on user input |
+| `secrets-exposure` | Hardcoded secrets | `const API_KEY = "sk-..."` |
+| `type-coercion` | Loose equality bugs | `if (value == null)` when 0 is valid |
+| `boundary-error` | Edge case handling | Empty array, zero values |
+| `concurrency` | Thread safety issues | Shared state without locks |
+| `intent-violation` | Violates documented behavior | Code contradicts README/docs |
+
+---
 
 ## Output Formats
 
@@ -494,74 +453,141 @@ Standard format for static analysis tools. Works with:
 
 ### Markdown
 
-Human-readable report with:
-- Bug severity badges
-- Code path traces
-- Suggested fixes
-- Evidence
+Two formats:
+- `bugs.md` - Technical (for developers)
+- `bugs-human.md` - Tester-friendly (for QA)
+
+### JSON
+
+Full bug data with code paths, evidence, and confidence scores.
+
+---
+
+## Contributing
+
+### Project Structure
+
+```
+whiterose/
+├── src/
+│   ├── cli/
+│   │   ├── index.ts              # CLI entry point
+│   │   └── commands/
+│   │       ├── init.ts           # whiterose init
+│   │       ├── scan.ts           # whiterose scan
+│   │       └── fix.ts            # whiterose fix
+│   │
+│   ├── core/
+│   │   ├── scanner.ts            # CoreScanner + PromptExecutor interface
+│   │   ├── multipass-scanner.ts  # Pass configurations (SCAN_PASSES)
+│   │   ├── flow-analyzer.ts      # Flow pass configurations (FLOW_PASSES)
+│   │   ├── fixer.ts              # Agentic fix logic
+│   │   ├── config.ts             # Config loading
+│   │   └── utils.ts              # Utilities
+│   │
+│   ├── providers/
+│   │   ├── executors/            # LSP-compliant provider implementations
+│   │   │   ├── index.ts          # getExecutor(), getAvailableExecutors()
+│   │   │   ├── claude-code.ts    # ClaudeCodeExecutor
+│   │   │   ├── codex.ts          # CodexExecutor
+│   │   │   ├── gemini.ts         # GeminiExecutor
+│   │   │   └── aider.ts          # AiderExecutor
+│   │   │
+│   │   ├── prompts/
+│   │   │   ├── multipass-prompts.ts    # Unit pass prompts
+│   │   │   ├── flow-analysis-prompts.ts # Integration/E2E prompts
+│   │   │   └── adversarial.ts          # Validation prompts
+│   │   │
+│   │   └── detect.ts             # Provider detection
+│   │
+│   ├── analysis/
+│   │   └── static.ts             # tsc/eslint integration
+│   │
+│   ├── tui/
+│   │   ├── App.tsx               # Main TUI app
+│   │   └── screens/              # TUI screens
+│   │
+│   ├── output/
+│   │   ├── sarif.ts              # SARIF output
+│   │   ├── markdown.ts           # Technical markdown
+│   │   └── human-readable.ts     # Tester-friendly markdown
+│   │
+│   └── types.ts                  # TypeScript types (Zod schemas)
+│
+├── tsup.config.ts                # Build config
+└── package.json
+```
+
+### Key Files for Contributors
+
+| File | Purpose |
+|------|---------|
+| `src/core/scanner.ts` | **Start here.** CoreScanner orchestrates everything. |
+| `src/core/multipass-scanner.ts` | Pass configurations for unit analysis |
+| `src/core/flow-analyzer.ts` | Pass configurations for integration/E2E |
+| `src/providers/executors/*.ts` | Provider implementations (simple!) |
+| `src/providers/prompts/*.ts` | Prompt templates |
+
+### Adding a New Provider
+
+1. Create `src/providers/executors/your-provider.ts`:
+
+```typescript
+import { PromptExecutor, PromptOptions, PromptResult } from '../../core/scanner.js';
+
+export class YourProviderExecutor implements PromptExecutor {
+  name = 'your-provider';
+
+  async isAvailable(): Promise<boolean> {
+    // Check if CLI tool is installed
+  }
+
+  async runPrompt(prompt: string, options: PromptOptions): Promise<PromptResult> {
+    // Run: your-cli -p "prompt"
+    // Return: { output: stdout, error: stderr }
+  }
+}
+```
+
+2. Register in `src/providers/executors/index.ts`
+3. Add to `ProviderType` in `src/types.ts`
+4. Add detection in `src/providers/detect.ts`
+
+### Adding a New Pass
+
+1. Add pass config to `SCAN_PASSES` in `src/core/multipass-scanner.ts` (for unit passes) or `FLOW_PASSES` in `src/core/flow-analyzer.ts` (for integration/E2E)
+
+2. Add to pipeline in `src/providers/prompts/flow-analysis-prompts.ts`:
+
+```typescript
+export function getFullAnalysisPipeline() {
+  return [
+    { phase: 'Unit Analysis', passes: [..., 'your-new-pass'] },
+    // ...
+  ];
+}
+```
+
+### Building
+
+```bash
+npm run build    # Build
+npm run dev      # Watch mode
+npm test         # Run tests
+```
+
+---
 
 ## Philosophy
 
 - **SRP**: whiterose finds bugs. It doesn't write tests, lint code, or format files.
-- **Leverage, Don't Reinvent**: Uses existing AI agents (Claude Code) rather than building a custom agent loop.
+- **Leverage, Don't Reinvent**: Uses existing AI agents (Claude Code, Codex) rather than building a custom agent loop.
+- **LSP-Compliant**: All providers are interchangeable. Scanning logic lives in ONE place.
 - **Transparency**: Shows exactly what's happening in real-time.
 - **Grounded**: Every bug must have evidence and a code path trace.
 - **Zero Cost**: Uses your existing LLM subscription.
 
-## Technical Details
-
-### How Provider Detection Works
-
-whiterose checks for installed CLI tools in this order:
-1. Checks if command exists in PATH
-2. Checks common installation locations:
-   - `~/.local/bin/`
-   - `/usr/local/bin/`
-   - `/opt/homebrew/bin/`
-
-### How Streaming Works
-
-1. whiterose spawns: `claude --verbose -p "<prompt>"` (or with `--dangerously-skip-permissions` if `--unsafe` flag used)
-2. Attaches to stdout stream
-3. Buffers output line-by-line
-4. Parses lines for protocol markers (`###SCANNING:`, `###BUG:`, etc.)
-5. Triggers callbacks for UI updates and bug collection
-
-### Security Features
-
-- **Path traversal prevention**: File paths in bug reports are validated to stay within the project directory
-- **Opt-in unsafe mode**: LLM permission prompts are shown by default; use `--unsafe` flag to bypass
-- **No external network calls**: All analysis happens locally via your LLM CLI
-
-### Protocol Markers
-
-| Marker | Purpose | Example |
-|--------|---------|---------|
-| `###SCANNING:` | File being analyzed | `###SCANNING:src/api/users.ts` |
-| `###BUG:` | Bug found (JSON) | `###BUG:{"file":"...","line":42,...}` |
-| `###UNDERSTANDING:` | Codebase understanding (JSON) | `###UNDERSTANDING:{"summary":{...}}` |
-| `###COMPLETE` | Analysis finished | `###COMPLETE` |
-| `###ERROR:` | Error occurred | `###ERROR:Failed to read file` |
-
-## Roadmap
-
-### v0.2 (Coming Soon)
-- [ ] VSCode extension for inline bug display
-- [ ] GitHub Actions integration for PR scanning
-- [ ] Improved monorepo support
-- [ ] Custom bug category definitions
-
-### v0.3
-- [ ] Historical bug tracking and trend analysis
-- [ ] Team collaboration features
-- [ ] Ollama/local LLM support
-- [ ] Plugin architecture for custom providers
-
-### v1.0
-- [ ] Production-ready stability
-- [ ] Enterprise features
-- [ ] Comprehensive documentation site
-- [ ] IDE integrations (JetBrains, Neovim)
+---
 
 ## License
 
@@ -569,10 +595,12 @@ PolyForm Noncommercial 1.0.0
 
 This software is free for non-commercial use. See [LICENSE](LICENSE) for details.
 
+---
+
 ## Credits
 
 Named after the [Mr. Robot](https://en.wikipedia.org/wiki/Mr._Robot) character who sees everything and orchestrates from the shadows.
 
 ---
 
-**Required Notice:** Copyright (c) 2024 shakecodeslikecray (https://github.com/shakecodeslikecray)
+**Copyright (c) 2024-2025 shakecodeslikecray (https://github.com/shakecodeslikecray)**

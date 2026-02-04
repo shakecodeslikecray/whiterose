@@ -29,17 +29,19 @@ export const BugList: React.FC<BugListProps> = ({ bugs, selectedIndex, onSelect,
   }, [localIndex, scrollOffset]);
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    if (key.upArrow || input === 'k') {
       setLocalIndex((i) => Math.max(0, i - 1));
-    } else if (key.downArrow) {
+    } else if (key.downArrow || input === 'j') {
       setLocalIndex((i) => Math.min(bugs.length - 1, i + 1));
     } else if (key.return) {
       onSelect(localIndex);
     } else if (input === 'b' || key.escape) {
       onBack();
-    } else if (key.pageUp) {
+    } else if (input === 'u' || input === '[') {
+      // Page up
       setLocalIndex((i) => Math.max(0, i - VISIBLE_ITEMS));
-    } else if (key.pageDown) {
+    } else if (input === 'd' || input === ']') {
+      // Page down
       setLocalIndex((i) => Math.min(bugs.length - 1, i + VISIBLE_ITEMS));
     }
   });
@@ -59,14 +61,17 @@ export const BugList: React.FC<BugListProps> = ({ bugs, selectedIndex, onSelect,
     <Box flexDirection="column">
       {/* Header */}
       <Box marginBottom={1}>
-        <Box width={8}>
+        <Box width={10}>
           <Text bold color="gray">ID</Text>
+        </Box>
+        <Box width={7}>
+          <Text bold color="gray">Kind</Text>
         </Box>
         <Box width={10}>
           <Text bold color="gray">Severity</Text>
         </Box>
         <Box width={10}>
-          <Text bold color="gray">Confidence</Text>
+          <Text bold color="gray">Conf</Text>
         </Box>
         <Box flexGrow={1}>
           <Text bold color="gray">Title</Text>
@@ -77,30 +82,45 @@ export const BugList: React.FC<BugListProps> = ({ bugs, selectedIndex, onSelect,
       {visibleBugs.map((bug, index) => {
         const actualIndex = scrollOffset + index;
         const isSelected = actualIndex === localIndex;
+        const kindLabel = bug.kind === 'smell' ? 'SMELL' : 'BUG';
+        const kindColor = bug.kind === 'smell' ? 'yellow' : 'red';
 
         return (
-          <Box key={`${bug.id}-${actualIndex}`}>
-            <Text color={isSelected ? 'cyan' : 'white'}>
-              {isSelected ? '▶ ' : '  '}
-            </Text>
-            <Box width={6}>
-              <Text color="gray">{bug.id}</Text>
-            </Box>
-            <Box width={10}>
-              <Text color={getSeverityColor(bug.severity)}>
-                {bug.severity.toUpperCase().padEnd(8)}
+          <Box key={`${bug.id}-${actualIndex}`} flexDirection="column">
+            <Box>
+              <Text color={isSelected ? 'cyan' : 'white'}>
+                {isSelected ? '▶ ' : '  '}
               </Text>
+              <Box width={8}>
+                <Text color="gray">{bug.id}</Text>
+              </Box>
+              <Box width={7}>
+                <Text color={kindColor}>{kindLabel.padEnd(5)}</Text>
+              </Box>
+              <Box width={10}>
+                <Text color={getSeverityColor(bug.severity)}>
+                  {bug.severity.toUpperCase().padEnd(8)}
+                </Text>
+              </Box>
+              <Box width={10}>
+                <Text color={getConfidenceColor(bug.confidence.overall)}>
+                  {bug.confidence.overall.toUpperCase().padEnd(6)}
+                </Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
+                <Text color={isSelected ? 'white' : 'gray'} wrap="truncate-end">
+                  {bug.title}
+                </Text>
+              </Box>
             </Box>
-            <Box width={10}>
-              <Text color={getConfidenceColor(bug.confidence.overall)}>
-                {bug.confidence.overall.toUpperCase().padEnd(8)}
-              </Text>
-            </Box>
-            <Box flexGrow={1}>
-              <Text color={isSelected ? 'white' : 'gray'}>
-                {truncate(bug.title, 50)}
-              </Text>
-            </Box>
+            {/* Show file on second line for selected item */}
+            {isSelected && (
+              <Box marginLeft={2}>
+                <Text color="cyan" dimColor>
+                  └─ {bug.file}:{bug.line}
+                </Text>
+              </Box>
+            )}
           </Box>
         );
       })}
@@ -119,7 +139,7 @@ export const BugList: React.FC<BugListProps> = ({ bugs, selectedIndex, onSelect,
       {/* Instructions */}
       <Box marginTop={1}>
         <Text color="gray">
-          [↑↓] Navigate  [Enter] View details  [PgUp/PgDn] Page  [b] Back
+          [↑↓/jk] Navigate  [Enter] View  [u/d] Page up/down  [b] Back
         </Text>
       </Box>
     </Box>
@@ -152,9 +172,4 @@ function getConfidenceColor(confidence: string): string {
     default:
       return 'white';
   }
-}
-
-function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 3) + '...';
 }

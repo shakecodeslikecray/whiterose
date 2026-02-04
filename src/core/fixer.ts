@@ -1,6 +1,6 @@
 import { execa } from 'execa';
-import { readFileSync, writeFileSync, existsSync, realpathSync } from 'fs';
-import { dirname, basename, resolve, relative, isAbsolute } from 'path';
+import { readFileSync, existsSync, realpathSync, statSync } from 'fs';
+import { resolve, relative, isAbsolute } from 'path';
 import { Bug, WhiteroseConfig } from '../types.js';
 import { createFixBranch, commitFix } from './git.js';
 import { getProviderCommand } from '../providers/detect.js';
@@ -62,8 +62,21 @@ interface FixResult {
   error?: string;
   branchName?: string;
   commitHash?: string;
+  falsePositive?: boolean;
+  falsePositiveReason?: string;
 }
 
+/**
+ * Apply a fix to a bug using an agentic approach.
+ *
+ * Instead of generating a fix and applying it ourselves, we give the bug
+ * details to the LLM provider and let it explore the code and fix it directly.
+ * This produces much better fixes because the LLM can:
+ * - Read related files for context
+ * - Understand the codebase architecture
+ * - Make multi-file changes if needed
+ * - Verify the fix makes sense
+ */
 export async function applyFix(
   bug: Bug,
   config: WhiteroseConfig,
@@ -83,7 +96,7 @@ export async function applyFix(
     };
   }
 
-  // Read the original file
+  // Verify file exists
   if (!existsSync(safePath)) {
     return {
       success: false,
@@ -91,46 +104,20 @@ export async function applyFix(
     };
   }
 
+  // Get file state before fix (for diff)
   const originalContent = readFileSync(safePath, 'utf-8');
-  const lines = originalContent.split('\n');
+  const originalMtime = statSync(safePath).mtime.getTime();
 
-  // If we have a suggested fix, try to apply it
-  let fixedContent: string;
-  let diff: string;
-
-  if (bug.suggestedFix) {
-    // Try to apply the suggested fix by replacing the relevant lines
-    const result = applySimpleFix(lines, bug.line, bug.endLine || bug.line, bug.suggestedFix);
-    if (result.success) {
-      fixedContent = result.content;
-      diff = result.diff;
-    } else {
-      // Fall back to LLM-based fix
-      const llmResult = await generateAndApplyFix(bug, config, originalContent, safePath);
-      if (!llmResult.success) {
-        return llmResult;
-      }
-      fixedContent = llmResult.content!;
-      diff = llmResult.diff!;
-    }
-  } else {
-    // No suggested fix, use LLM
-    const llmResult = await generateAndApplyFix(bug, config, originalContent, safePath);
-    if (!llmResult.success) {
-      return llmResult;
-    }
-    fixedContent = llmResult.content!;
-    diff = llmResult.diff!;
-  }
-
-  // Dry run - just show the diff
+  // Dry run - just show what would be done
   if (dryRun) {
-    console.log('\n--- Dry Run: Proposed changes ---');
-    console.log(diff);
-    console.log('--- End of proposed changes ---\n');
+    console.log('\n--- Dry Run: Would run agentic fix ---');
+    console.log(`Bug: ${bug.title}`);
+    console.log(`File: ${bug.file}:${bug.line}`);
+    console.log(`Provider: ${config.provider}`);
+    console.log('--- End of dry run ---\n');
     return {
       success: true,
-      diff,
+      diff: `[Dry run - no changes made]\nWould fix: ${bug.title}\nIn: ${bug.file}:${bug.line}`,
     };
   }
 
@@ -140,13 +127,49 @@ export async function applyFix(
     branchName = await createFixBranch(branch, bug);
   }
 
-  // Write the fixed content (using validated safe path)
-  writeFileSync(safePath, fixedContent, 'utf-8');
+  // Run the agentic fix
+  let agenticResult: AgenticResult;
+  try {
+    agenticResult = await runAgenticFix(bug, config, projectDir);
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message || 'Agentic fix failed',
+    };
+  }
 
-  // Commit the change and get commit hash
+  // Check if the LLM determined this is a false positive
+  if (agenticResult.falsePositive) {
+    return {
+      success: true, // Operation succeeded, just no fix needed
+      falsePositive: true,
+      falsePositiveReason: agenticResult.falsePositiveReason,
+    };
+  }
+
+  // Verify the file was modified
+  const newMtime = statSync(safePath).mtime.getTime();
+  if (newMtime === originalMtime) {
+    // File wasn't modified - check if content changed anyway
+    const newContent = readFileSync(safePath, 'utf-8');
+    if (newContent === originalContent) {
+      return {
+        success: false,
+        error: 'AI did not modify the file. The fix may require manual intervention.',
+      };
+    }
+  }
+
+  // Generate diff
+  const newContent = readFileSync(safePath, 'utf-8');
+  const diff = generateSimpleDiff(originalContent, newContent, bug.file);
+
+  // Commit the change
   let commitHash: string | undefined;
-  if (branchName || !branch) {
+  try {
     commitHash = await commitFix(bug);
+  } catch {
+    // Commit failed but fix was applied
   }
 
   // Track fix in bug status
@@ -160,191 +183,207 @@ export async function applyFix(
   };
 }
 
-function applySimpleFix(
-  lines: string[],
-  startLine: number,
-  endLine: number,
-  fix: string
-): { success: boolean; content: string; diff: string } {
-  // Simple fix application: replace lines startLine to endLine with the fix
-  // This works for simple one-line or few-line fixes
-
-  const lineIndex = startLine - 1; // Convert to 0-indexed
-  const endIndex = endLine - 1;
-
-  if (lineIndex < 0 || lineIndex >= lines.length) {
-    return { success: false, content: '', diff: '' };
-  }
-
-  // Get the indentation of the original line
-  const originalLine = lines[lineIndex];
-  const indentMatch = originalLine.match(/^(\s*)/);
-  const indent = indentMatch ? indentMatch[1] : '';
-
-  // Apply indentation to fix
-  const fixLines = fix.split('\n').map((line, i) => {
-    if (i === 0 || line.trim() === '') return line;
-    return indent + line.trimStart();
-  });
-
-  // Build the diff
-  const removedLines = lines.slice(lineIndex, endIndex + 1);
-  const diff = [
-    `--- ${lines[lineIndex]}`,
-    ...removedLines.map((l) => `- ${l}`),
-    ...fixLines.map((l) => `+ ${l}`),
-  ].join('\n');
-
-  // Create the new content
-  const newLines = [...lines.slice(0, lineIndex), ...fixLines, ...lines.slice(endIndex + 1)];
-
-  return {
-    success: true,
-    content: newLines.join('\n'),
-    diff,
-  };
+interface AgenticResult {
+  falsePositive: boolean;
+  falsePositiveReason?: string;
 }
 
-async function generateAndApplyFix(
+/**
+ * Run the LLM provider in agentic mode to fix the bug.
+ * The provider will explore the codebase and fix the bug directly.
+ * If it determines the bug is a false positive, it will report that instead.
+ */
+async function runAgenticFix(
   bug: Bug,
   config: WhiteroseConfig,
-  originalContent: string,
-  safePath?: string
-): Promise<{ success: boolean; content?: string; diff?: string; error?: string }> {
-  try {
-    // Build a prompt for fixing
-    const prompt = buildFixPrompt(bug, originalContent);
+  projectDir: string
+): Promise<AgenticResult> {
+  const providerCommand = getProviderCommand(config.provider);
+  const prompt = buildAgenticFixPrompt(bug);
 
-    // Use validated path for cwd, fallback to process.cwd()
-    const workingDir = safePath ? dirname(safePath) : process.cwd();
+  // Different flags for different providers
+  const args: string[] = [];
 
-    // Get the command for the configured provider
-    const providerCommand = getProviderCommand(config.provider);
+  if (config.provider === 'claude-code') {
+    // Claude Code: run in agentic mode with auto-accept for edits
+    // The --dangerously-skip-permissions flag allows edits without prompts
+    args.push('-p', prompt, '--dangerously-skip-permissions');
+  } else if (config.provider === 'gemini') {
+    // Gemini CLI: run in prompt mode, it will use tools automatically
+    args.push('-p', prompt);
+  } else if (config.provider === 'aider') {
+    // Aider: pass the message and file
+    args.push('--message', prompt, bug.file);
+  } else if (config.provider === 'codex') {
+    // Codex: pass prompt
+    args.push('-p', prompt);
+  } else {
+    // Default: try -p flag
+    args.push('-p', prompt);
+  }
 
-    // Use the provider to generate a fix
-    const { stdout } = await execa(
-      providerCommand,
-      ['-p', prompt, '--output-format', 'text'],
-      {
-        cwd: workingDir,
-        timeout: 120000,
-        env: { ...process.env, NO_COLOR: '1' },
-      }
-    );
+  // Run the provider
+  const { stdout, stderr } = await execa(providerCommand, args, {
+    cwd: projectDir,
+    timeout: 300000, // 5 minute timeout for agentic operations
+    env: { ...process.env, NO_COLOR: '1' },
+    reject: false, // Don't throw on non-zero exit
+  });
 
-    // Parse the fixed content from the response
-    const fixedContent = parseFixResponse(stdout, originalContent);
-    if (!fixedContent) {
-      return {
-        success: false,
-        error: 'Failed to parse fix from LLM response',
-      };
+  // Check for known error patterns
+  if (stderr) {
+    const lowerStderr = stderr.toLowerCase();
+    if (lowerStderr.includes('not found') || lowerStderr.includes('enoent')) {
+      throw new Error(`Provider ${config.provider} not found. Is it installed?`);
     }
+    if (lowerStderr.includes('permission') || lowerStderr.includes('denied')) {
+      throw new Error('Permission denied. Check provider configuration.');
+    }
+  }
 
-    // Generate diff
-    const diff = generateDiff(originalContent, fixedContent, bug.file);
-
+  // Check if LLM reported this as a false positive
+  const output = stdout || '';
+  const falsePositiveMatch = output.match(/FALSE_POSITIVE:\s*(.+?)(?:\n|$)/i);
+  if (falsePositiveMatch) {
     return {
-      success: true,
-      content: fixedContent,
-      diff,
-    };
-  } catch (error: any) {
-    return {
-      success: false,
-      error: error.message || 'Unknown error generating fix',
+      falsePositive: true,
+      falsePositiveReason: falsePositiveMatch[1].trim(),
     };
   }
+
+  // Also check for the structured marker
+  if (output.includes('###FALSE_POSITIVE###')) {
+    const reasonMatch = output.match(/###FALSE_POSITIVE###\s*(.+?)(?:###|$)/s);
+    return {
+      falsePositive: true,
+      falsePositiveReason: reasonMatch ? reasonMatch[1].trim() : 'Bug was determined to be a false positive after code analysis.',
+    };
+  }
+
+  return { falsePositive: false };
 }
 
-function buildFixPrompt(bug: Bug, originalContent: string): string {
-  return `Fix the following bug in the code.
+/**
+ * Build a prompt for agentic bug fixing.
+ * This prompt instructs the AI to explore and fix, not just return code.
+ * It also instructs the AI to report if the bug is a false positive.
+ */
+function buildAgenticFixPrompt(bug: Bug): string {
+  const evidenceSection = bug.evidence.length > 0
+    ? `\nEVIDENCE:\n${bug.evidence.map((e) => `- ${e}`).join('\n')}`
+    : '';
+
+  const codePathSection = bug.codePath.length > 0
+    ? `\nCODE PATH:\n${bug.codePath.map((s) => `${s.step}. ${s.file}:${s.line} - ${s.explanation}`).join('\n')}`
+    : '';
+
+  return `Analyze and fix this reported bug.
 
 BUG DETAILS:
+- ID: ${bug.id}
 - Title: ${bug.title}
-- Description: ${bug.description}
 - File: ${bug.file}
 - Line: ${bug.line}${bug.endLine ? `-${bug.endLine}` : ''}
 - Category: ${bug.category}
 - Severity: ${bug.severity}
 
-EVIDENCE:
-${bug.evidence.map((e) => `- ${e}`).join('\n')}
+DESCRIPTION:
+${bug.description}
+${evidenceSection}
+${codePathSection}
 
-CODE PATH:
-${bug.codePath.map((s) => `${s.step}. ${s.file}:${s.line} - ${s.explanation}`).join('\n')}
+INSTRUCTIONS:
+1. Read the file ${bug.file} to understand the context
+2. Read any related files if needed to understand the full picture
+3. CRITICALLY VERIFY the bug is real:
+   - Check for early returns or guard clauses that make the buggy line unreachable
+   - Check for validation/sanitization upstream that prevents the issue
+   - Check if framework protections make this safe
+   - If the bug is NOT real, report it as a false positive (see below)
+4. If the bug IS real, fix it by editing the file directly
+5. Make minimal changes - only fix the identified bug
+6. Do not refactor or improve other code
+7. Preserve existing code style and formatting
 
-ORIGINAL FILE CONTENT:
-\`\`\`
-${originalContent}
-\`\`\`
+FALSE POSITIVE DETECTION:
+If after analysis you determine this is NOT a real bug, output this marker instead of fixing:
+###FALSE_POSITIVE###
+Reason: [Brief explanation of why this is a false positive]
+###
 
-${bug.suggestedFix ? `SUGGESTED FIX APPROACH:\n${bug.suggestedFix}\n\n` : ''}
+Common false positive patterns:
+- Early return: \`if (arr.length === 0) return;\` makes later \`arr[0]\` SAFE
+- Guard clause: \`if (!user) throw Error();\` makes later \`user.name\` SAFE
+- Upstream validation that the scanner missed
+- Framework auto-sanitization (ORM, templating engine, etc.)
 
-Please provide the COMPLETE fixed file content. Output ONLY the fixed code, no explanations.
-Wrap the code in \`\`\` code blocks.
-
-IMPORTANT:
-- Fix ONLY the identified bug
-- Do not refactor or change anything else
-- Preserve all formatting and style
-- Ensure the fix actually addresses the bug`;
+If it's a real bug, fix it. If it's a false positive, report it with the marker above.`;
 }
 
-function parseFixResponse(response: string, originalContent: string): string | null {
-  // Try to extract code from markdown code blocks
-  const codeBlockMatch = response.match(/```(?:\w+)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    const extracted = codeBlockMatch[1].trim();
-    // Validate it looks like code (has some similar lines)
-    const originalLines = originalContent.split('\n').slice(0, 5);
-    const extractedLines = extracted.split('\n').slice(0, 5);
-
-    // Check if at least some lines match (accounting for the fix)
-    let matchCount = 0;
-    for (const origLine of originalLines) {
-      if (extractedLines.some((l) => l.trim() === origLine.trim())) {
-        matchCount++;
-      }
-    }
-
-    if (matchCount >= 2 || extracted.length > originalContent.length * 0.5) {
-      return extracted;
-    }
-  }
-
-  // If no code block, check if the entire response looks like code
-  if (response.includes('function') || response.includes('const ') || response.includes('import ')) {
-    return response.trim();
-  }
-
-  return null;
-}
-
-function generateDiff(original: string, fixed: string, filename: string): string {
+/**
+ * Generate a simple unified diff between two strings.
+ */
+function generateSimpleDiff(original: string, modified: string, filename: string): string {
   const origLines = original.split('\n');
-  const fixedLines = fixed.split('\n');
+  const modLines = modified.split('\n');
 
-  const diff: string[] = [`--- a/${basename(filename)}`, `+++ b/${basename(filename)}`];
+  const diff: string[] = [
+    `--- a/${filename}`,
+    `+++ b/${filename}`,
+  ];
 
-  // Simple line-by-line diff
-  const maxLen = Math.max(origLines.length, fixedLines.length);
+  let inHunk = false;
+  let hunkStart = -1;
+  let hunkLines: string[] = [];
+
+  const flushHunk = () => {
+    if (hunkLines.length > 0) {
+      diff.push(`@@ -${hunkStart + 1} @@`);
+      diff.push(...hunkLines);
+      hunkLines = [];
+    }
+    inHunk = false;
+  };
+
+  const maxLen = Math.max(origLines.length, modLines.length);
 
   for (let i = 0; i < maxLen; i++) {
     const origLine = origLines[i];
-    const fixedLine = fixedLines[i];
+    const modLine = modLines[i];
 
-    if (origLine === undefined) {
-      diff.push(`+ ${fixedLine}`);
-    } else if (fixedLine === undefined) {
-      diff.push(`- ${origLine}`);
-    } else if (origLine !== fixedLine) {
-      diff.push(`- ${origLine}`);
-      diff.push(`+ ${fixedLine}`);
+    if (origLine === modLine) {
+      if (inHunk) {
+        // Add context line
+        hunkLines.push(` ${origLine || ''}`);
+        // End hunk after 3 context lines
+        if (hunkLines.filter(l => l.startsWith(' ')).length >= 3) {
+          flushHunk();
+        }
+      }
+    } else {
+      if (!inHunk) {
+        inHunk = true;
+        hunkStart = i;
+        // Add leading context
+        for (let j = Math.max(0, i - 3); j < i; j++) {
+          hunkLines.push(` ${origLines[j] || ''}`);
+        }
+      }
+
+      if (origLine !== undefined && modLine === undefined) {
+        hunkLines.push(`-${origLine}`);
+      } else if (origLine === undefined && modLine !== undefined) {
+        hunkLines.push(`+${modLine}`);
+      } else if (origLine !== modLine) {
+        hunkLines.push(`-${origLine}`);
+        hunkLines.push(`+${modLine}`);
+      }
     }
   }
 
-  return diff.join('\n');
+  flushHunk();
+
+  return diff.length > 2 ? diff.join('\n') : 'No changes detected';
 }
 
 export async function batchFix(

@@ -88,13 +88,23 @@ Search AGGRESSIVELY for any of these defenses:
 - Test coverage that verifies this behavior
 - Design patterns that explain the choice
 
-## 5. LOGICAL ERRORS IN THE CLAIM
+## 5. CONTROL FLOW & REACHABILITY (CRITICAL!)
+- **EARLY RETURNS**: Does the function return BEFORE the buggy line when the bad condition exists?
+  - Example: \`if (arr.length === 0) return false;\` makes later \`arr[0]\` UNREACHABLE for empty arrays
+  - Example: \`if (!user) return null;\` makes later \`user.name\` UNREACHABLE when user is null
+- **THROWS**: Does a throw statement prevent reaching the buggy line?
+  - Example: \`if (!data) throw new Error();\` makes later \`data.value\` SAFE
+- **GUARD CLAUSES**: Does a guard clause exit the function/block early?
+- **TRACE CAREFULLY**: For \`if (x) return;\` the code after is only reached when \`!x\`
+- This is the #1 source of FALSE POSITIVES - check THOROUGHLY!
+
+## 6. LOGICAL ERRORS IN THE CLAIM
 - Is the claimed code path actually impossible?
 - Does the evidence contradict itself?
 - Is the triggering input actually invalid/impossible?
 - Would the suggested fix break existing functionality?
 
-## 6. ENVIRONMENTAL PROTECTIONS
+## 7. ENVIRONMENTAL PROTECTIONS
 - Environment variables that change behavior
 - Feature flags that disable this path
 - Production-only safeguards

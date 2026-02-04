@@ -81,6 +81,8 @@ export const Bug = z.object({
   status: BugStatus.default('open'),
   fixedAt: z.string().datetime().optional(),
   fixCommit: z.string().optional(),
+  // Scanner metadata
+  passName: z.string().optional(), // Which pass found this bug
 });
 export type Bug = z.infer<typeof Bug>;
 

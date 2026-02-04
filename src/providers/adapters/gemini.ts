@@ -419,106 +419,58 @@ Output ONLY JSON:
       });
 
       const timeout = setTimeout(() => {
+        cleanup();
         this.currentProcess?.kill();
         reject(new Error('Gemini analysis timed out after 10 minutes'));
       }, 600000);
 
-private async runGeminiAgentic(prompt: string, cwd: string): Promise<string> {
-const geminiCommand = getProviderCommand('gemini');
+      const onStdout = (chunk: Buffer) => {
+        const text = chunk.toString();
+        output += text;
+        for (const line of text.split('\n')) {
+          try {
+            const event = JSON.parse(line.trim());
+            if (event.type === 'assistant' && event.message?.content) {
+              for (const item of event.message.content) {
+                if (item.type === 'tool_use') {
+                  this.reportProgress(`Using ${item.name || 'tool'}...`);
+                }
+              }
+            }
+          } catch { }
+        }
+      };
 
-return new Promise((resolve, reject) => {
-let output = '';
-
-this.currentProcess = spawn(geminiCommand, ['-p', prompt, '--output-format', 'stream-json'], {
-cwd,
-env: { ...process.env, NO_COLOR: '1' },
-stdio: ['ignore', 'pipe', 'pipe'],
-});
-
-const timeout = setTimeout(() => {
-cleanup();
-this.currentProcess?.kill();
-reject(new Error('Gemini analysis timed out after 10 minutes'));
-}, 600000);
-
-const onStdout = (chunk: Buffer) => {
-const text = chunk.toString();
-output += text;
-for (const line of text.split('\n')) {
-try {
-const event = JSON.parse(line.trim());
-if (event.type === 'assistant' && event.message?.content) {
-for (const item of event.message.content) {
-if (item.type === 'tool_use') {
-this.reportProgress(`Using ${item.name || 'tool'}...`);
-}
-}
-}
-} catch { }
-}
-};
-
-const onStderr = (chunk: Buffer) => {
-const text = chunk.toString().trim();
-if (text) this.reportProgress(`Gemini: ${text.slice(0, 100)}`);
-};
-
-const cleanup = () => {
-clearTimeout(timeout);
-this.currentProcess?.stdout?.off('data', onStdout);
-this.currentProcess?.stderr?.off('data', onStderr);
-this.currentProcess?.off('exit', onExit);
-this.currentProcess?.off('error', onError);
-};
-
-const onExit = (code: number | null) => {
-cleanup();
-if (code !== 0 && code !== null) {
-this.reportProgress(`Gemini exited with code ${code}`);
-}
-resolve(output);
-};
-
-const onError = (err: Error) => {
-cleanup();
-reject(err);
-};
-
-this.currentProcess.stdout?.on('data', onStdout);
-this.currentProcess.stderr?.on('data', onStderr);
-this.currentProcess.on('exit', onExit);
-this.currentProcess.on('error', onError);
-});
-}
+      const onStderr = (chunk: Buffer) => {
+        const text = chunk.toString().trim();
+        if (text) this.reportProgress(`Gemini: ${text.slice(0, 100)}`);
       };
 
       const cleanup = () => {
-      clearTimeout(timeout);
-      this.currentProcess?.stdout?.off('data', onStdout);
-      this.currentProcess?.stderr?.off('data', onStderr);
-      this.currentProcess?.off('exit', onExit);
-      this.currentProcess?.off('error', onError);
+        clearTimeout(timeout);
+        this.currentProcess?.stdout?.off('data', onStdout);
+        this.currentProcess?.stderr?.off('data', onStderr);
+        this.currentProcess?.off('exit', onExit);
+        this.currentProcess?.off('error', onError);
       };
 
       const onExit = (code: number | null) => {
-      cleanup();
-      if (code !== 0 && code !== null) {
-      this.reportProgress(`Gemini exited with code ${code}`);
-      }
-      resolve(output);
+        cleanup();
+        if (code !== 0 && code !== null) {
+          this.reportProgress(`Gemini exited with code ${code}`);
+        }
+        resolve(output);
       };
 
       const onError = (err: Error) => {
-      cleanup();
-      reject(err);
+        cleanup();
+        reject(err);
       };
 
       this.currentProcess.stdout?.on('data', onStdout);
       this.currentProcess.stderr?.on('data', onStderr);
       this.currentProcess.on('exit', onExit);
       this.currentProcess.on('error', onError);
-      });
-      }
     });
   }
 

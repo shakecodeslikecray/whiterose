@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { Bug, WhiteroseConfig } from '../types.js';
-import { App } from './App.js';
+import { App, FixResultInfo } from './App.js';
 import { applyFix } from '../core/fixer.js';
 import { removeBugFromAccumulated } from '../core/bug-merger.js';
 
@@ -17,8 +17,20 @@ export async function startFixTUI(
   cwd?: string
 ): Promise<void> {
   return new Promise((resolve) => {
-    const handleFix = async (bug: Bug): Promise<void> => {
+    const handleFix = async (bug: Bug): Promise<FixResultInfo> => {
       const result = await applyFix(bug, config, options);
+
+      // Handle false positive - return info so UI can show it
+      if (result.falsePositive) {
+        // Remove from accumulated list since it's not a real bug
+        if (cwd) {
+          removeBugFromAccumulated(cwd, bug.id);
+        }
+        return {
+          falsePositive: true,
+          falsePositiveReason: result.falsePositiveReason,
+        };
+      }
 
       // Throw on failure so TUI shows error correctly
       if (!result.success) {
@@ -29,6 +41,8 @@ export async function startFixTUI(
       if (!options.dryRun && cwd) {
         removeBugFromAccumulated(cwd, bug.id);
       }
+
+      return { falsePositive: false };
     };
 
     const handleExit = () => {

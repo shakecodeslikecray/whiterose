@@ -3,11 +3,12 @@ import chalk from 'chalk';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, resolve, isAbsolute } from 'path';
 import { execa } from 'execa';
-import { Bug } from '../../types.js';
+import { Bug, ProviderType } from '../../types.js';
 import { loadConfig } from '../../core/config.js';
 import { startFixTUI } from '../../tui/index.js';
 import { applyFix } from '../../core/fixer.js';
 import { loadAccumulatedBugs, removeBugFromAccumulated } from '../../core/bug-merger.js';
+import { detectProvider } from '../../providers/detect.js';
 
 interface FixOptions {
   dryRun: boolean;
@@ -15,11 +16,64 @@ interface FixOptions {
   sarif?: string;
   github?: string;
   describe?: boolean;
+  provider?: string;
 }
 
 export async function fixCommand(bugId: string | undefined, options: FixOptions): Promise<void> {
   const cwd = process.cwd();
   const whiterosePath = join(cwd, '.whiterose');
+
+  // ─────────────────────────────────────────────────────────────
+  // Provider Selection (first thing!)
+  // ─────────────────────────────────────────────────────────────
+  let selectedProvider: ProviderType;
+
+  if (options.provider) {
+    // Use CLI-specified provider
+    selectedProvider = options.provider as ProviderType;
+    p.log.info(`Using provider: ${chalk.cyan(selectedProvider)}`);
+  } else {
+    // Detect and prompt for provider
+    const detectSpinner = p.spinner();
+    detectSpinner.start('Detecting LLM providers...');
+
+    const availableProviders = await detectProvider();
+
+    if (availableProviders.length === 0) {
+      detectSpinner.stop('No providers found');
+      p.log.error('No LLM providers detected on your system.');
+      console.log();
+      console.log(chalk.dim('  Install one of:'));
+      console.log(chalk.dim('  - claude-code: ') + chalk.cyan('npm install -g @anthropic-ai/claude-code'));
+      console.log(chalk.dim('  - gemini: ') + chalk.cyan('npm install -g @google/gemini-cli'));
+      console.log(chalk.dim('  - aider: ') + chalk.cyan('pip install aider-chat'));
+      console.log();
+      process.exit(1);
+    }
+
+    detectSpinner.stop(`Found ${availableProviders.length} provider(s)`);
+
+    if (availableProviders.length === 1) {
+      selectedProvider = availableProviders[0];
+      p.log.info(`Using ${chalk.cyan(selectedProvider)}`);
+    } else {
+      const providerChoice = await p.select({
+        message: 'Select LLM provider for fixing bugs',
+        options: availableProviders.map((provider) => ({
+          value: provider,
+          label: provider,
+          hint: provider === 'claude-code' ? 'recommended' : undefined,
+        })),
+      });
+
+      if (p.isCancel(providerChoice)) {
+        p.cancel('Cancelled.');
+        process.exit(0);
+      }
+
+      selectedProvider = providerChoice as ProviderType;
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────
   // Source 1: External SARIF file
@@ -43,9 +97,10 @@ export async function fixCommand(bugId: string | undefined, options: FixOptions)
     p.log.info(`Loaded ${bugs.length} bugs from ${options.sarif}`);
 
     // Load config if available (for fix options), or use defaults
-    const config = existsSync(whiterosePath)
+    const baseConfig = existsSync(whiterosePath)
       ? await loadConfig(cwd)
       : getDefaultConfig();
+    const config = { ...baseConfig, provider: selectedProvider };
 
     return await processBugList(bugs, config, options, bugId);
   }
@@ -64,9 +119,10 @@ export async function fixCommand(bugId: string | undefined, options: FixOptions)
 
     p.log.info(`Loaded bug from GitHub: ${bug.title}`);
 
-    const config = existsSync(whiterosePath)
+    const baseConfig = existsSync(whiterosePath)
       ? await loadConfig(cwd)
       : getDefaultConfig();
+    const config = { ...baseConfig, provider: selectedProvider };
 
     return await fixSingleBug(bug, config, options);
   }
@@ -83,9 +139,10 @@ export async function fixCommand(bugId: string | undefined, options: FixOptions)
       process.exit(0);
     }
 
-    const config = existsSync(whiterosePath)
+    const baseConfig = existsSync(whiterosePath)
       ? await loadConfig(cwd)
       : getDefaultConfig();
+    const config = { ...baseConfig, provider: selectedProvider };
 
     return await fixSingleBug(bug, config, options);
   }
@@ -104,8 +161,9 @@ export async function fixCommand(bugId: string | undefined, options: FixOptions)
     process.exit(1);
   }
 
-  // Load config
-  const config = await loadConfig(cwd);
+  // Load config and override provider with selected one
+  const baseConfig = await loadConfig(cwd);
+  const config = { ...baseConfig, provider: selectedProvider };
 
   // Load accumulated bugs (union of all scans)
   const accumulatedBugs = loadAccumulatedBugs(cwd);
