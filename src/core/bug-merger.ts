@@ -153,6 +153,9 @@ export function loadAccumulatedBugs(cwd: string): StoredBugList {
     }
 
     // Normalize missing fields for backward compatibility
+    if (!Array.isArray(stored.bugs)) {
+      stored.bugs = [];
+    }
     stored.bugs = stored.bugs.map((b) => ({ ...b, kind: b.kind || 'bug' }));
     return stored;
   } catch {
