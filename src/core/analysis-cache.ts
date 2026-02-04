@@ -84,6 +84,24 @@ export function loadCache(projectDir: string): CacheFile {
       return createEmptyCache();
     }
 
+    if (!cache.entries || typeof cache.entries !== 'object') {
+      cache.entries = {};
+    }
+    if (!cache.stats || typeof cache.stats !== 'object') {
+      cache.stats = {
+        totalEntries: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+      };
+    } else {
+      cache.stats.totalEntries =
+        typeof cache.stats.totalEntries === 'number' ? cache.stats.totalEntries : 0;
+      cache.stats.cacheHits =
+        typeof cache.stats.cacheHits === 'number' ? cache.stats.cacheHits : 0;
+      cache.stats.cacheMisses =
+        typeof cache.stats.cacheMisses === 'number' ? cache.stats.cacheMisses : 0;
+    }
+
     return cache;
   } catch {
     return createEmptyCache();
