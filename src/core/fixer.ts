@@ -235,7 +235,13 @@ async function runAgenticFix(
     try {
       const result = await execa(
         providerCommand,
-        ['exec', '--skip-git-repo-check', '-o', outputFile, '-'],
+        [
+          'exec',
+          '--skip-git-repo-check',
+          '--writable-roots', projectDir, // Allow codex to write to project files
+          '-o', outputFile,
+          '-',
+        ],
         {
           cwd: projectDir,
           input: prompt, // Pass prompt via stdin
