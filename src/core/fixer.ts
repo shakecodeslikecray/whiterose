@@ -237,10 +237,11 @@ async function runAgenticFix(
         providerCommand,
         [
           'exec',
+          '--full-auto', // Allow workspace writes without approval prompts
           '--skip-git-repo-check',
-          '--writable-roots', projectDir, // Allow codex to write to project files
+          '-C', projectDir, // Set working directory for codex
           '-o', outputFile,
-          '-',
+          '-', // Read prompt from stdin
         ],
         {
           cwd: projectDir,
