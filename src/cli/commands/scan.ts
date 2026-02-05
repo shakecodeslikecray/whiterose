@@ -306,8 +306,16 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
       try {
         const crossFileBugs = await analyzeCrossFile(cwd);
         bugs.push(...crossFileBugs);
-      } catch {
-        // Skip on error
+      } catch (err) {
+        // In CI mode, surface analysis failures so they don't go unnoticed
+        if (options.ci) {
+          console.error(JSON.stringify({
+            error: 'Cross-file analysis failed',
+            message: err instanceof Error ? err.message : String(err),
+          }));
+          process.exit(1);
+        }
+        // For non-CI quiet modes (--json, --sarif), skip silently
       }
     }
   }
@@ -334,8 +342,16 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
       try {
         const contractBugs = await analyzeContracts(cwd);
         bugs.push(...contractBugs);
-      } catch {
-        // Skip on error
+      } catch (err) {
+        // In CI mode, surface analysis failures so they don't go unnoticed
+        if (options.ci) {
+          console.error(JSON.stringify({
+            error: 'Contract analysis failed',
+            message: err instanceof Error ? err.message : String(err),
+          }));
+          process.exit(1);
+        }
+        // For non-CI quiet modes (--json, --sarif), skip silently
       }
     }
   }
@@ -349,8 +365,16 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
       if (intentBugs.length > 0) {
         bugs.push(...intentBugs);
       }
-    } catch {
-      // Skip on error
+    } catch (err) {
+      // In CI mode, surface analysis failures so they don't go unnoticed
+      if (options.ci) {
+        console.error(JSON.stringify({
+          error: 'Intent validation failed',
+          message: err instanceof Error ? err.message : String(err),
+        }));
+        process.exit(1);
+      }
+      // For non-CI quiet modes (--json, --sarif) or interactive, skip silently
     }
   }
 
