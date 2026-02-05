@@ -2,6 +2,7 @@ import * as p from '@clack/prompts';
 import chalk from 'chalk';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import fg from 'fast-glob';
 import { WhiteroseConfig, ScanResult, Bug, ConfidenceLevel, ProviderType } from '../../types.js';
 import { loadConfig, loadUnderstanding } from '../../core/config.js';
 import { CoreScanner } from '../../core/scanner.js';
@@ -112,10 +113,27 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
     if (!isQuiet) {
       const spinner = p.spinner();
       spinner.start('Scanning files...');
-      filesToScan = paths.length > 0 ? paths : await scanCodebase(cwd, config);
+      if (paths.length > 0) {
+        // Expand glob patterns in provided paths
+        filesToScan = await fg(paths, {
+          cwd,
+          ignore: ['node_modules/**', 'dist/**', 'build/**', '.next/**'],
+          absolute: false,
+        });
+      } else {
+        filesToScan = await scanCodebase(cwd, config);
+      }
       spinner.stop(`Found ${filesToScan.length} files to scan`);
     } else {
-      filesToScan = paths.length > 0 ? paths : await scanCodebase(cwd, config);
+      if (paths.length > 0) {
+        filesToScan = await fg(paths, {
+          cwd,
+          ignore: ['node_modules/**', 'dist/**', 'build/**', '.next/**'],
+          absolute: false,
+        });
+      } else {
+        filesToScan = await scanCodebase(cwd, config);
+      }
     }
   } else {
     // Incremental scan requires config

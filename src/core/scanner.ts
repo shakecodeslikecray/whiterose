@@ -583,33 +583,49 @@ export class CoreScanner {
   }
 
   private buildQuickScanPrompt(context: ScanContext): string {
-    const { understanding, staticResults } = context;
+    const { understanding, staticResults, files } = context;
 
     const staticSignals = staticResults.length > 0
       ? `\nStatic analysis signals:\n${staticResults.slice(0, 30).map(r => `- ${r.file}:${r.line}: ${r.message}`).join('\n')}`
       : '';
 
-    return `You are a security auditor. Analyze this ${understanding.summary.type} codebase for bugs.
+    // Include list of files to scan (limit to 50 to keep prompt manageable)
+    const fileList = files.slice(0, 50).map(f => `- ${f}`).join('\n');
+    const moreFiles = files.length > 50 ? `\n... and ${files.length - 50} more files` : '';
+
+    return `You are a security auditor. Analyze this ${understanding.summary.type} codebase for bugs and code smells.
 
 Project: ${understanding.summary.description || 'Unknown'}
 Framework: ${understanding.summary.framework || 'None'}
 Language: ${understanding.summary.language}
+
+## FILES TO ANALYZE
+Read and analyze these files for security issues:
+${fileList}${moreFiles}
 ${staticSignals}
 
-Find bugs in these categories:
-1. Injection (SQL, command, XSS)
-2. Auth bypass
-3. Null/undefined dereference
-4. Logic errors
-5. Async/race conditions
-6. Resource leaks
-7. Data validation issues
-8. Secrets exposure
+## INSTRUCTIONS
+1. Read each file listed above
+2. Look for security issues, bugs, and code smells
+3. Report ALL suspicious patterns - false positives will be filtered later
+4. Use kind="smell" for risky patterns, kind="bug" for confirmed issues
 
-Output ONLY a JSON array:
-[{"file": "path", "line": 42, "title": "Bug title", "description": "Details", "severity": "critical|high|medium|low", "category": "injection|auth-bypass|null-reference|logic-error|async-issue|resource-leak|data-validation|secrets-exposure", "evidence": ["evidence"], "suggestedFix": "fix"}]
+## CATEGORIES TO CHECK
+- Injection (SQL, command, XSS) - unsanitized user input
+- Auth bypass - missing auth checks, IDOR
+- Null/undefined dereference - accessing properties on potentially null values
+- Logic errors - wrong conditions, off-by-one, inverted checks
+- Async/race conditions - unhandled promises, race conditions
+- Resource leaks - unclosed handles, missing cleanup
+- Data validation - missing input validation, type coercion issues
+- Secrets exposure - hardcoded keys, leaked credentials
+- Error handling - swallowed errors, missing try/catch
 
-If no bugs, return: []`;
+## OUTPUT FORMAT
+Output a JSON array (one object per issue found):
+[{"file": "path", "line": 42, "title": "Issue title", "description": "Details", "kind": "bug|smell", "severity": "critical|high|medium|low", "category": "logic-error", "evidence": ["evidence"]}]
+
+If no issues found after reading all files, return: []`;
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -619,7 +635,7 @@ If no bugs, return: []`;
   private parseResponse(output: string, files: string[], startIndex: number, passName: string): Bug[] {
     const bugs: Bug[] = [];
 
-    // Find all JSON blocks in the output
+    // Method 1: Find all JSON blocks in <json></json> tags
     const jsonMatches = output.matchAll(/<json>([\s\S]*?)<\/json>/g);
 
     for (const match of jsonMatches) {
@@ -638,7 +654,28 @@ If no bugs, return: []`;
       }
     }
 
-    // Also try parsing as a plain JSON array (for quick scan)
+    // Method 2: Find JSON in markdown code blocks (```json ... ```)
+    if (bugs.length === 0) {
+      const codeBlockMatches = output.matchAll(/```(?:json)?\s*([\s\S]*?)```/g);
+      for (const match of codeBlockMatches) {
+        try {
+          const parsed = JSON.parse(match[1].trim());
+          // Handle both single object and array
+          const items = Array.isArray(parsed) ? parsed : [parsed];
+          for (const item of items) {
+            const bug = this.parseBugData(item, startIndex + bugs.length, files, passName);
+            if (bug) {
+              bugs.push(bug);
+              this.progress.onBugFound?.(bug);
+            }
+          }
+        } catch {
+          // Continue on parse error
+        }
+      }
+    }
+
+    // Method 3: Try parsing as a plain JSON array (fallback)
     if (bugs.length === 0) {
       const arrayMatch = output.match(/\[[\s\S]*\]/);
       if (arrayMatch) {
@@ -652,6 +689,23 @@ If no bugs, return: []`;
                 this.progress.onBugFound?.(bug);
               }
             }
+          }
+        } catch {
+          // Continue
+        }
+      }
+    }
+
+    // Method 4: Find individual JSON objects (not in code blocks)
+    if (bugs.length === 0) {
+      const objectMatches = output.matchAll(/\{[^{}]*"file"[^{}]*"line"[^{}]*\}/g);
+      for (const match of objectMatches) {
+        try {
+          const parsed = JSON.parse(match[0]);
+          const bug = this.parseBugData(parsed, startIndex + bugs.length, files, passName);
+          if (bug) {
+            bugs.push(bug);
+            this.progress.onBugFound?.(bug);
           }
         } catch {
           // Continue

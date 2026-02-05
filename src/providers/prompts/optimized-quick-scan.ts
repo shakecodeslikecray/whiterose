@@ -178,19 +178,16 @@ Before including ANY bug, verify ALL:
 
 If ANY is NO, do not include the bug.
 
-# suggestedFix IS MANDATORY
-- MUST contain ACTUAL CODE that fixes the bug
-- NOT descriptions like "add a null check" - write the ACTUAL CODE
-- NOT advice - show the EXACT fix
-- BAD: "Add try-catch around JSON.parse"
-- GOOD: "try { const data = JSON.parse(str); } catch (e) { return null; }"
-- If you cannot write the exact fix, DO NOT report the bug
+# suggestedFix IS OPTIONAL
+- Include a fix if you can, but it's not required
+- Focus on finding issues first, fixes second
 
 # OUTPUT RULES
 - Output MUST be valid JSON wrapped in <json></json> tags
-- Empty array is correct if no confirmed bugs: {"bugs": []}
-- Quality over quantity - 1 real bug beats 10 maybes
+- Empty array only if truly nothing suspicious: {"bugs": []}
+- Thoroughness over precision - report potential issues
+- Use kind="bug" for confirmed issues, kind="smell" for risky patterns
 - ONLY analyze the CHANGED FUNCTIONS above
 
-Analyze the changed functions using Chain-of-Thought. Report ONLY confirmed bugs with ACTUAL CODE fixes.`;
+Analyze the changed functions. Report ALL suspicious patterns, not just confirmed exploits.`;
 }

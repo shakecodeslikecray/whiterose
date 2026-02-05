@@ -273,7 +273,7 @@ ${TYPESCRIPT_WARNING}
 When done:
 <json>{"type": "complete", "category": "${category}", "bugsFound": N}</json>
 
-Find all ${category} bugs. Quality over quantity - only report confirmed bugs with working fixes.`;
+Find all ${category} issues. Be thorough - report bugs AND code smells. Use kind="smell" for risky patterns.`;
 }
 
 export { detectSlab, getScopeInstructions, type Slab };

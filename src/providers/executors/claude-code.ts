@@ -21,12 +21,21 @@ export class ClaudeCodeExecutor implements PromptExecutor {
   async runPrompt(prompt: string, options: PromptOptions): Promise<PromptResult> {
     const claudeCommand = getProviderCommand('claude-code');
 
+    if (process.env.WHITEROSE_DEBUG) {
+      console.log('\n[DEBUG] Running Claude Code command:', claudeCommand);
+      console.log('[DEBUG] Prompt length:', prompt.length);
+      console.log('[DEBUG] CWD:', options.cwd);
+      console.log('[DEBUG] First 500 chars of prompt:');
+      console.log(prompt.substring(0, 500));
+    }
+
     try {
       const { stdout, stderr } = await execa(
         claudeCommand,
         [
           '-p', prompt,
           '--dangerously-skip-permissions', // Allow file reads without prompts
+          '--output-format', 'text', // Ensure non-interactive output
         ],
         {
           cwd: options.cwd,
@@ -36,6 +45,7 @@ export class ClaudeCodeExecutor implements PromptExecutor {
             NO_COLOR: '1',
           },
           reject: false,
+          stdin: 'ignore', // Prevent waiting for stdin
         }
       );
 
@@ -57,6 +67,15 @@ export class ClaudeCodeExecutor implements PromptExecutor {
         if (stderr.includes('Error:') && !stdout) {
           throw new Error(`Claude Code error: ${stderr.substring(0, 200)}`);
         }
+      }
+
+      // Debug: log output and errors
+      if (process.env.WHITEROSE_DEBUG) {
+        console.log('\n[DEBUG] Claude Code stdout length:', stdout?.length || 0);
+        console.log('[DEBUG] Claude Code stderr:', stderr?.substring(0, 300) || '(none)');
+        console.log('[DEBUG] First 1000 chars of stdout:');
+        console.log(stdout?.substring(0, 1000) || '(empty)');
+        console.log('[DEBUG] End response\n');
       }
 
       return {

@@ -176,28 +176,29 @@ When you're scanning a file, report:
 When done:
 ###COMPLETE
 
-## CRITICAL RULES
+## REPORTING GUIDELINES
 
-1. **PRECISION MATTERS** - Only report bugs you're 95%+ confident about
-2. **MUST HAVE FIX** - If you can't write the exact fix code, don't report it
-3. **CHECK UPSTREAM** - Verify there are no guards/validation you missed
-4. **REAL SCENARIOS** - Bug must be triggerable with realistic input
-5. **DON'T HALLUCINATE** - If unsure about code behavior, read more files
+1. **REPORT SUSPICIOUS PATTERNS** - If it looks risky, report it. False positives will be filtered later.
+2. **INCLUDE CODE SMELLS** - Risky patterns that aren't immediately exploitable (use kind="smell")
+3. **FIX IS OPTIONAL** - Nice to have but not required
+4. **BE THOROUGH** - Read at least 15-20 files, search for patterns with grep
+5. **DON'T SKIP FILES** - Scan all matching files, not just a few
 
-## WHAT NOT TO REPORT
+## WHAT TO REPORT
 
-- Code that "could be improved" but works correctly
-- Theoretical issues requiring unrealistic attacker access
-- Missing validation for inputs validated elsewhere
-- TypeScript type assertions (intentional)
-- Performance concerns (unless they cause failures)
-- Framework behaviors (React StrictMode, etc.)
+- Confirmed security bugs (kind="bug")
+- Risky patterns that need review (kind="smell")
+- Missing validation or sanitization
+- Potential null/undefined access
+- Suspicious error handling
+- Hardcoded values that might be secrets
+- Logic that looks wrong or inverted
 
 ## BEGIN
 
-Start by exploring the codebase structure. Read key files. Follow the data flow from user input to database/output. Report bugs as you find them with the ###BUG: marker.
+Start by searching for patterns with grep. Read at least 15-20 source files. Report issues as you find them with the ###BUG: marker.
 
-Take your time. Quality over quantity. Find the bugs that actually matter.`;
+Be thorough. Finding 10 potential issues is better than finding 0 "confirmed" bugs.`;
 }
 
 /**

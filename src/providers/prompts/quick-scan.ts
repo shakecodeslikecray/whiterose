@@ -123,29 +123,26 @@ Respond with ONLY this JSON wrapped in <json></json> tags:
 }
 </json>
 
-# REQUIREMENTS CHECKLIST
+# REPORTING GUIDELINES
 
-Before including ANY bug, verify ALL:
-[ ] Can you write exact triggering input? (triggerInput)
-[ ] Can you show the data flow? (codePath with line numbers)
-[ ] Have you verified no guards prevent it? (evidence)
-[ ] Can you write the exact fix code? (suggestedFix)
-[ ] Is this a real scenario, not theoretical?
+Report issues if they match ANY of these:
+- Looks like a security vulnerability
+- Risky pattern that could cause bugs
+- Missing error handling
+- Potential null/undefined access
+- Suspicious logic or conditions
+- Hardcoded values that might be secrets
 
-If ANY is NO, do not include the bug.
+Use kind="bug" for confirmed issues, kind="smell" for risky patterns.
 
-# suggestedFix IS MANDATORY
-- MUST contain ACTUAL CODE that fixes the bug
-- NOT descriptions like "add a null check" - write the ACTUAL CODE
-- NOT advice - show the EXACT fix
-- BAD: "Add try-catch around JSON.parse"
-- GOOD: "try { const data = JSON.parse(str); } catch (e) { return null; }"
-- If you cannot write the exact fix, DO NOT report the bug
+# suggestedFix IS OPTIONAL
+- Include a fix if you can, but it's not required
+- Focus on finding issues first, fixes second
 
 # OUTPUT RULES
 - Output MUST be valid JSON wrapped in <json></json> tags
-- Empty array is correct if no confirmed bugs: {"bugs": []}
-- Quality over quantity - 1 real bug beats 10 maybes
+- Empty array only if truly nothing suspicious: {"bugs": []}
+- Thoroughness over precision - report potential issues
 
-Analyze the file using Chain-of-Thought. Report ONLY confirmed bugs with ACTUAL CODE fixes.`;
+Analyze the file. Report ALL suspicious patterns, not just confirmed exploits.`;
 }

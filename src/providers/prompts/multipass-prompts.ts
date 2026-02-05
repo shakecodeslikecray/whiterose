@@ -93,23 +93,18 @@ ${pass.falsePositiveHints.map(h => `- ${h}`).join('\n')}
 
 ${cwePatterns ? `## KNOWN VULNERABILITY PATTERNS\n${cwePatterns}` : ''}
 
-## CRITICAL RULES
+## REPORTING GUIDELINES
 
-1. **ONLY ${pass.name.toUpperCase()} BUGS** - Ignore all other categories
-2. **MUST HAVE FIX** - No fix = not confirmed = don't report
-3. **TRACE THE DATA** - Follow user input to the vulnerable sink
-4. **CHECK GUARDS** - Verify there's no validation you missed
-5. **BE SPECIFIC** - Exact file, line, and triggering input
-6. **CHECK CONTROL FLOW** - CRITICAL: Verify the buggy line is actually REACHABLE:
-   - Look for early returns: \`if (x.length === 0) return;\` makes later \`x[0]\` SAFE
-   - Look for throws: \`if (!user) throw new Error()\` makes later \`user.name\` SAFE
-   - Look for guard clauses that exit before the buggy line
-   - If a condition causes function exit, code after is UNREACHABLE in that case
-   - Example FALSE POSITIVE: \`if (arr.length === 0) return false; ... arr[0].name\` - the access is SAFE because empty array caused early return
+1. **ONLY ${pass.name.toUpperCase()} ISSUES** - Focus on this category
+2. **REPORT POTENTIAL ISSUES** - If something looks suspicious, report it. Better to flag potential issues than miss real bugs.
+3. **INCLUDE CODE SMELLS** - Report risky patterns even if not immediately exploitable (set kind: "smell")
+4. **TRACE THE DATA** - Follow user input to potentially vulnerable sinks
+5. **BE SPECIFIC** - Include exact file, line number, and what makes it suspicious
+6. **SUGGESTED FIX IS OPTIONAL** - Nice to have but not required. Report the issue even without a fix.
 
 ## REPORTING FORMAT
 
-When you find a CONFIRMED ${pass.name} bug:
+When you find a ${pass.name} issue (bug or code smell):
 
 <json>
 {
@@ -118,24 +113,22 @@ When you find a CONFIRMED ${pass.name} bug:
     "file": "src/api/users.ts",
     "line": 42,
     "endLine": 45,
-    "title": "Short description of the bug",
-    "description": "Detailed explanation of why this is a bug and how it can be exploited.",
+    "title": "Short description of the issue",
+    "description": "Explanation of why this is problematic and potential impact.",
+    "kind": "bug|smell",
     "category": "${pass.category}",
     "severity": "critical|high|medium|low",
     "confidence": "high|medium|low",
-    "triggerInput": "Exact input that triggers the bug",
-    "codePath": [
-      {"step": 1, "file": "src/api/users.ts", "line": 38, "code": "const name = req.query.name", "explanation": "User input enters here"},
-      {"step": 2, "file": "src/api/users.ts", "line": 42, "code": "db.execute(query)", "explanation": "Used unsafely here"}
-    ],
     "evidence": [
       "Evidence point 1",
       "Evidence point 2"
     ],
-    "suggestedFix": "const result = await db.query('SELECT * FROM users WHERE name = $1', [req.query.name]);"
+    "suggestedFix": "Optional: how to fix it"
   }
 }
 </json>
+
+Use kind="bug" for confirmed vulnerabilities, kind="smell" for risky patterns that need review.
 
 Progress updates:
 ###SCANNING:path/to/file.ts
@@ -145,9 +138,13 @@ When done:
 
 ## BEGIN
 
-Start by searching for ${pass.name} patterns using grep. Then read the files and trace the data flow. Report bugs as you confirm them.
+Start by searching for ${pass.name} patterns using grep. Read at least 10-15 files that match the patterns. Report issues as you find them.
 
-REMEMBER: Only ${pass.name.toUpperCase()} bugs. Quality over quantity. Every bug must have an exact fix.`;
+IMPORTANT:
+- Report ANYTHING suspicious - we'll filter false positives later
+- Include code smells and risky patterns, not just confirmed exploits
+- If unsure, report it with confidence="low"
+- Aim for thoroughness - finding 10 potential issues is better than finding 0 confirmed bugs`;
 }
 
 /**
