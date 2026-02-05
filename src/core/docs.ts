@@ -184,7 +184,7 @@ export function extractIntentFromDocs(docs: ExistingDocs): ExtractedIntent {
   // Extract features from README
   if (docs.readme) {
     // Look for features section
-    const featuresMatch = docs.readme.match(/##\s*Features?\s*\n([\s\S]*?)(?=\n##|\n---|\$)/i);
+    const featuresMatch = docs.readme.match(/##\s*Features?\s*\n([\s\S]*?)(?=\n##|\n---|$)/i);
     if (featuresMatch) {
       const featureLines = featuresMatch[1].split('\n')
         .filter(line => line.trim().startsWith('-') || line.trim().startsWith('*'))
