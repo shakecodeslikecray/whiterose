@@ -43,6 +43,26 @@ export class AiderExecutor implements PromptExecutor {
         }
       );
 
+      // Check for API errors in stderr before returning
+      if (stderr) {
+        // Rate limit errors (aider uses OpenAI/Anthropic/etc APIs)
+        if (stderr.includes('429') || stderr.includes('rate limit') || stderr.includes('RateLimitError')) {
+          throw new Error('Aider API rate limit reached. Try again later.');
+        }
+        // Authentication errors
+        if (stderr.includes('401') || stderr.includes('AuthenticationError') || stderr.includes('invalid api key')) {
+          throw new Error('Aider API authentication failed. Check your API key.');
+        }
+        // Credit/billing errors
+        if (stderr.includes('402') || stderr.includes('insufficient') || stderr.includes('billing')) {
+          throw new Error('Aider API billing error. Check your account credits.');
+        }
+        // Generic errors that indicate complete failure
+        if ((stderr.includes('Error') || stderr.includes('error')) && !stdout) {
+          throw new Error(`Aider error: ${stderr.substring(0, 200)}`);
+        }
+      }
+
       return {
         output: stdout || '',
         error: stderr || undefined,

@@ -42,6 +42,26 @@ export class OllamaExecutor implements PromptExecutor {
         }
       );
 
+      // Check for errors in stderr before returning
+      if (stderr) {
+        // Connection errors (ollama server not running)
+        if (stderr.includes('connection refused') || stderr.includes('ECONNREFUSED')) {
+          throw new Error('Ollama server not running. Start it with: ollama serve');
+        }
+        // Model not found
+        if (stderr.includes('model') && (stderr.includes('not found') || stderr.includes('does not exist'))) {
+          throw new Error(`Ollama model '${this.model}' not found. Run: ollama pull ${this.model}`);
+        }
+        // Out of memory
+        if (stderr.includes('out of memory') || stderr.includes('OOM')) {
+          throw new Error('Ollama out of memory. Try a smaller model or increase system memory.');
+        }
+        // Generic errors that indicate complete failure
+        if ((stderr.includes('Error') || stderr.includes('error')) && !stdout) {
+          throw new Error(`Ollama error: ${stderr.substring(0, 200)}`);
+        }
+      }
+
       return {
         output: stdout || '',
         error: stderr || undefined,
