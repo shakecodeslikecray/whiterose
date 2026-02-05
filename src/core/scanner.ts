@@ -361,13 +361,52 @@ export class CoreScanner {
         }
       }
     } else {
-      // Try to find any JSON object
-      const jsonObjectMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonObjectMatch) {
-        try {
-          parsed = JSON.parse(jsonObjectMatch[0]);
-        } catch {
-          // Continue with defaults
+      // Try to find a valid JSON object by testing each closing brace position
+      // The greedy regex would fail if there are trailing braces in explanatory text
+      const firstBrace = output.indexOf('{');
+      if (firstBrace !== -1) {
+        // Find all closing brace positions and try each one (from earliest to latest)
+        const substring = output.slice(firstBrace);
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+
+        for (let i = 0; i < substring.length; i++) {
+          const char = substring[i];
+
+          if (escape) {
+            escape = false;
+            continue;
+          }
+
+          if (char === '\\' && inString) {
+            escape = true;
+            continue;
+          }
+
+          if (char === '"') {
+            inString = !inString;
+            continue;
+          }
+
+          if (inString) continue;
+
+          if (char === '{') {
+            depth++;
+          } else if (char === '}') {
+            depth--;
+            if (depth === 0) {
+              // Found a balanced JSON object, try to parse it
+              const candidate = substring.slice(0, i + 1);
+              try {
+                parsed = JSON.parse(candidate);
+                break; // Success, stop looking
+              } catch {
+                // Not valid JSON, keep looking for a larger balanced object
+                depth = 1; // Reset to continue looking
+              }
+            }
+          }
         }
       }
     }
