@@ -399,6 +399,7 @@ async function runAgenticFix(
       );
 
       // Stream stdout in real-time if progress callback is provided
+      // Only show tool usage events to avoid verbose output
       if (onProgress && subprocess.stdout) {
         let lineBuffer = '';
         subprocess.stdout.on('data', (chunk: Buffer) => {
@@ -412,27 +413,28 @@ async function runAgenticFix(
             if (trimmed) {
               try {
                 const event = JSON.parse(trimmed);
-                // Extract meaningful progress messages from stream-json events
+                // Only show tool_use events - skip all text content to avoid verbose output
                 if (event.type === 'assistant' && event.message?.content) {
                   for (const block of event.message.content) {
                     if (block.type === 'tool_use') {
-                      // Show tool usage (e.g., "Reading file...", "Editing file...")
+                      // Show tool usage with friendly names
                       const toolName = block.name || 'tool';
-                      onProgress(`Using ${toolName}...`);
-                    } else if (block.type === 'text' && block.text) {
-                      // Show text snippets (first 80 chars)
-                      const preview = block.text.substring(0, 80).replace(/\n/g, ' ').trim();
-                      if (preview) {
-                        onProgress(preview + (block.text.length > 80 ? '...' : ''));
-                      }
+                      const friendlyNames: Record<string, string> = {
+                        'Read': 'Reading file',
+                        'Edit': 'Editing file',
+                        'Write': 'Writing file',
+                        'Bash': 'Running command',
+                        'Glob': 'Searching files',
+                        'Grep': 'Searching content',
+                        'Task': 'Running task',
+                      };
+                      const displayName = friendlyNames[toolName] || `Using ${toolName}`;
+                      onProgress(`${displayName}...`);
                     }
                   }
                 }
               } catch {
-                // Not JSON or parsing failed, show raw line if meaningful
-                if (trimmed.length > 3 && trimmed.length < 100) {
-                  onProgress(trimmed);
-                }
+                // Silently ignore non-JSON lines - don't show raw output
               }
             }
           }
