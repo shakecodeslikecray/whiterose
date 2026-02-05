@@ -1,6 +1,6 @@
 {
   "name": "@shakecodeslikecray/whiterose",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "AI-powered bug hunter that uses your existing LLM subscription. \"I've been staring at your code for a long time.\"",
   "keywords": [
     "bug-finder",
