@@ -158,7 +158,20 @@ export function loadAccumulatedBugs(cwd: string): StoredBugList {
     }
     stored.bugs = stored.bugs.map((b) => ({ ...b, kind: b.kind || 'bug' }));
     return stored;
-  } catch {
+  } catch (error) {
+    // File exists but is corrupted - create backup and warn user
+    const backupPath = `${bugsPath}.corrupted.${Date.now()}`;
+    try {
+      const corruptedContent = readFileSync(bugsPath, 'utf-8');
+      writeFileSync(backupPath, corruptedContent);
+      console.warn(`Warning: ${BUGS_FILENAME} is corrupted and could not be parsed.`);
+      console.warn(`Corrupted file backed up to: ${backupPath}`);
+      console.warn('Bug history has been reset. Previous bugs will appear as new.');
+    } catch {
+      // Backup failed, still warn about corruption
+      console.warn(`Warning: ${BUGS_FILENAME} is corrupted and could not be parsed.`);
+      console.warn('Bug history has been reset. Previous bugs will appear as new.');
+    }
     return {
       version: STORAGE_VERSION,
       lastUpdated: new Date().toISOString(),
