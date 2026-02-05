@@ -1,7 +1,7 @@
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
 import { existsSync, writeFileSync, readFileSync } from 'fs';
-import { join, relative, basename } from 'path';
+import { join, relative, basename, isAbsolute } from 'path';
 import fg from 'fast-glob';
 import { WhiteroseConfig, ScanResult, Bug, ConfidenceLevel, ProviderType, ScanMeta, ScanSummary } from '../../types.js';
 import { loadConfig, loadUnderstanding } from '../../core/config.js';
@@ -53,21 +53,27 @@ function getRepoName(cwd: string): string {
 /**
  * Count lines of code in files
  */
-async function countLinesOfCode(cwd: string, files: string[]): Promise<number> {
+function countLinesOfCode(cwd: string, files: string[]): number {
   let total = 0;
   for (const file of files.slice(0, 500)) { // Limit to first 500 for performance
     try {
-      const content = readFileSync(join(cwd, file), 'utf-8');
+      // Handle both absolute and relative paths
+      const filePath = isAbsolute(file) ? file : join(cwd, file);
+      if (!existsSync(filePath)) continue;
+
+      const content = readFileSync(filePath, 'utf-8');
+      // Count non-empty, non-comment lines
       const lines = content.split('\n').filter(line => {
         const trimmed = line.trim();
         return trimmed.length > 0 &&
                !trimmed.startsWith('//') &&
                !trimmed.startsWith('/*') &&
-               !trimmed.startsWith('*');
+               !trimmed.startsWith('*') &&
+               !trimmed.startsWith('#'); // Also skip shell/python comments
       });
       total += lines.length;
     } catch {
-      // Skip unreadable files
+      // Skip unreadable files (binary, permissions, etc.)
     }
   }
   return total;
@@ -467,7 +473,7 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
   // ─────────────────────────────────────────────────────────────
   // Calculate LoC and create scan result
   // ─────────────────────────────────────────────────────────────
-  const linesOfCode = await countLinesOfCode(cwd, filesToScan);
+  const linesOfCode = countLinesOfCode(cwd, filesToScan);
   const scanDuration = Date.now() - scanStartTime;
 
   // Separate bugs and smells with severity breakdown
