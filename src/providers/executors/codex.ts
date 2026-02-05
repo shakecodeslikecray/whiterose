@@ -47,6 +47,25 @@ export class CodexExecutor implements PromptExecutor {
         }
       );
 
+      // Check for API errors in stderr before processing output
+      if (stderr) {
+        // Rate limit / usage limit errors
+        if (stderr.includes('429') || stderr.includes('usage_limit') || stderr.includes('rate limit')) {
+          throw new Error('Codex API rate limit reached. Try again later or upgrade your plan.');
+        }
+        // Authentication errors
+        if (stderr.includes('401') || stderr.includes('unauthorized') || stderr.includes('authentication')) {
+          throw new Error('Codex API authentication failed. Check your API key.');
+        }
+        // Generic API errors
+        if (stderr.includes('ERROR:') || stderr.includes('error=http')) {
+          // Extract the error message
+          const errorMatch = stderr.match(/ERROR:\s*(.+?)(?:\n|$)/i) || stderr.match(/error=(.+?)(?:\n|$)/);
+          const errorMsg = errorMatch ? errorMatch[1].trim() : stderr.substring(0, 200);
+          throw new Error(`Codex API error: ${errorMsg}`);
+        }
+      }
+
       // Try to read from output file first
       let output = stdout || '';
       if (existsSync(outputFile)) {

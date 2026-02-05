@@ -39,6 +39,26 @@ export class ClaudeCodeExecutor implements PromptExecutor {
         }
       );
 
+      // Check for API errors in stderr before returning
+      if (stderr) {
+        // Rate limit errors
+        if (stderr.includes('429') || stderr.includes('rate limit') || stderr.includes('too many requests')) {
+          throw new Error('Claude API rate limit reached. Try again later.');
+        }
+        // Authentication errors
+        if (stderr.includes('401') || stderr.includes('unauthorized') || stderr.includes('invalid api key')) {
+          throw new Error('Claude API authentication failed. Check your API key.');
+        }
+        // Credit/billing errors
+        if (stderr.includes('402') || stderr.includes('insufficient') || stderr.includes('billing')) {
+          throw new Error('Claude API billing error. Check your account credits.');
+        }
+        // Generic errors that indicate complete failure
+        if (stderr.includes('Error:') && !stdout) {
+          throw new Error(`Claude Code error: ${stderr.substring(0, 200)}`);
+        }
+      }
+
       return {
         output: stdout || '',
         error: stderr || undefined,
