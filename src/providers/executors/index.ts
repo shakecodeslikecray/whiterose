@@ -11,6 +11,7 @@ import { CodexExecutor } from './codex.js';
 import { GeminiExecutor } from './gemini.js';
 import { AiderExecutor } from './aider.js';
 import { OllamaExecutor } from './ollama.js';
+import { OpenCodeExecutor } from './opencode.js';
 import { ProviderType } from '../../types.js';
 
 const executors: Record<string, () => PromptExecutor> = {
@@ -19,6 +20,7 @@ const executors: Record<string, () => PromptExecutor> = {
   'gemini': () => new GeminiExecutor(),
   'aider': () => new AiderExecutor(),
   'ollama': () => new OllamaExecutor(),
+  'opencode': () => new OpenCodeExecutor(),
 };
 
 /**
@@ -53,3 +55,4 @@ export { CodexExecutor } from './codex.js';
 export { GeminiExecutor } from './gemini.js';
 export { AiderExecutor } from './aider.js';
 export { OllamaExecutor } from './ollama.js';
+export { OpenCodeExecutor } from './opencode.js';
