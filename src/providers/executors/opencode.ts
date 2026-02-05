@@ -33,6 +33,7 @@ export class OpenCodeExecutor implements PromptExecutor {
             NO_COLOR: '1',
           },
           reject: false,
+          stdin: 'ignore',
         }
       );
 

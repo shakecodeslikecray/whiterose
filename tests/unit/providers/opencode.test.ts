@@ -72,6 +72,7 @@ describe('providers/executors/opencode', () => {
           timeout: 300000,
           env: expect.objectContaining({ NO_COLOR: '1' }),
           reject: false,
+          stdin: 'ignore',
         })
       );
       expect(result.output).toBe('analysis result');
