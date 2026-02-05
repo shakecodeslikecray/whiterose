@@ -212,7 +212,27 @@ function loadBugsFromSarif(sarifPath: string): Bug[] {
     throw new Error(`Failed to parse SARIF file: ${sarifPath}. File may be corrupted or malformed.`);
   }
 
-  return sarif.runs?.[0]?.results?.map((r: any, i: number) => {
+  // Validate basic SARIF structure
+  if (!sarif || typeof sarif !== 'object') {
+    throw new Error(`Invalid SARIF file: ${sarifPath}. Expected a JSON object.`);
+  }
+
+  const runs = sarif.runs;
+  if (!Array.isArray(runs) || runs.length === 0) {
+    return []; // Valid SARIF with no runs = no bugs
+  }
+
+  const results = runs[0]?.results;
+  if (!Array.isArray(results)) {
+    return []; // Valid SARIF with no results = no bugs
+  }
+
+  return results.map((r: any, i: number) => {
+    // Validate r is an object
+    if (!r || typeof r !== 'object') {
+      throw new Error(`Invalid SARIF result at index ${i}: expected an object.`);
+    }
+
     // Try to extract full bug info from SARIF properties if available
     const props = r.properties || {};
 
@@ -230,31 +250,47 @@ function loadBugsFromSarif(sarifPath: string): Bug[] {
       explanation: loc.message?.text || '',
     })) || [];
 
+    // Extract and validate file path - must be a string
+    const rawFile = r.locations?.[0]?.physicalLocation?.artifactLocation?.uri;
+    const file = typeof rawFile === 'string' ? rawFile : 'unknown';
+
+    // Extract and validate line number - must be a number
+    const rawLine = r.locations?.[0]?.physicalLocation?.region?.startLine;
+    const line = typeof rawLine === 'number' && Number.isFinite(rawLine) ? Math.floor(rawLine) : 0;
+
+    // Extract and validate endLine - must be a number if present
+    const rawEndLine = r.locations?.[0]?.physicalLocation?.region?.endLine;
+    const endLine = typeof rawEndLine === 'number' && Number.isFinite(rawEndLine) ? Math.floor(rawEndLine) : undefined;
+
+    // Validate ruleId is a string if present
+    const rawId = r.ruleId;
+    const id = typeof rawId === 'string' ? rawId : `WR-${String(i + 1).padStart(3, '0')}`;
+
     return {
-      id: r.ruleId || `WR-${String(i + 1).padStart(3, '0')}`,
-      title: sanitizeSarifText(rawTitle, 'title'),
-      description: sanitizeSarifText(rawDescription, 'description'),
-      file: r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || 'unknown',
-      line: r.locations?.[0]?.physicalLocation?.region?.startLine || 0,
-      endLine: r.locations?.[0]?.physicalLocation?.region?.endLine,
+      id,
+      title: sanitizeSarifText(String(rawTitle), 'title'),
+      description: sanitizeSarifText(String(rawDescription), 'description'),
+      file,
+      line,
+      endLine,
       kind: props.kind || 'bug',
       severity: mapSarifLevel(r.level),
       category: props.category || 'logic-error',
       confidence: {
         overall: props.confidence || 'medium',
-        codePathValidity: props.codePathValidity || 0.8,
-        reachability: props.reachability || 0.8,
-        intentViolation: props.intentViolation || false,
-        staticToolSignal: props.staticToolSignal || false,
-        adversarialSurvived: props.adversarialSurvived || false,
+        codePathValidity: typeof props.codePathValidity === 'number' ? props.codePathValidity : 0.8,
+        reachability: typeof props.reachability === 'number' ? props.reachability : 0.8,
+        intentViolation: typeof props.intentViolation === 'boolean' ? props.intentViolation : false,
+        staticToolSignal: typeof props.staticToolSignal === 'boolean' ? props.staticToolSignal : false,
+        adversarialSurvived: typeof props.adversarialSurvived === 'boolean' ? props.adversarialSurvived : false,
       },
       codePath: sanitizeSarifCodePath(rawCodePath),
       evidence: sanitizeSarifEvidence(props.evidence),
-      suggestedFix: props.suggestedFix ? sanitizeSarifText(props.suggestedFix, 'suggestedFix') : undefined,
+      suggestedFix: props.suggestedFix ? sanitizeSarifText(String(props.suggestedFix), 'suggestedFix') : undefined,
       createdAt: new Date().toISOString(),
       status: 'open',
     };
-  }) || [];
+  });
 }
 
 async function loadBugFromGitHub(issueUrl: string, cwd: string): Promise<Bug | null> {
