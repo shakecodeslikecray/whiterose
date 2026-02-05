@@ -6,7 +6,7 @@ import { execa } from 'execa';
 import { Bug, ProviderType } from '../../types.js';
 import { loadConfig } from '../../core/config.js';
 import { startFixTUI } from '../../tui/index.js';
-import { applyFix } from '../../core/fixer.js';
+import { applyFix, sanitizeSarifText, sanitizeSarifEvidence, sanitizeSarifCodePath } from '../../core/fixer.js';
 import { loadAccumulatedBugs, removeBugFromAccumulated } from '../../core/bug-merger.js';
 import { detectProvider } from '../../providers/detect.js';
 
@@ -216,10 +216,24 @@ function loadBugsFromSarif(sarifPath: string): Bug[] {
     // Try to extract full bug info from SARIF properties if available
     const props = r.properties || {};
 
+    // SECURITY: Sanitize untrusted SARIF fields to prevent prompt injection
+    // These fields are embedded into LLM prompts and could contain malicious instructions
+    const rawTitle = r.message?.text || 'Unknown bug';
+    const rawDescription = r.message?.markdown || r.message?.text || '';
+
+    // Build raw code path for sanitization
+    const rawCodePath = r.codeFlows?.[0]?.threadFlows?.[0]?.locations?.map((loc: any, idx: number) => ({
+      step: idx + 1,
+      file: loc.location?.physicalLocation?.artifactLocation?.uri || '',
+      line: loc.location?.physicalLocation?.region?.startLine || 0,
+      code: '',
+      explanation: loc.message?.text || '',
+    })) || [];
+
     return {
       id: r.ruleId || `WR-${String(i + 1).padStart(3, '0')}`,
-      title: r.message?.text || 'Unknown bug',
-      description: r.message?.markdown || r.message?.text || '',
+      title: sanitizeSarifText(rawTitle, 'title'),
+      description: sanitizeSarifText(rawDescription, 'description'),
       file: r.locations?.[0]?.physicalLocation?.artifactLocation?.uri || 'unknown',
       line: r.locations?.[0]?.physicalLocation?.region?.startLine || 0,
       endLine: r.locations?.[0]?.physicalLocation?.region?.endLine,
@@ -234,15 +248,9 @@ function loadBugsFromSarif(sarifPath: string): Bug[] {
         staticToolSignal: props.staticToolSignal || false,
         adversarialSurvived: props.adversarialSurvived || false,
       },
-      codePath: r.codeFlows?.[0]?.threadFlows?.[0]?.locations?.map((loc: any, idx: number) => ({
-        step: idx + 1,
-        file: loc.location?.physicalLocation?.artifactLocation?.uri || '',
-        line: loc.location?.physicalLocation?.region?.startLine || 0,
-        code: '',
-        explanation: loc.message?.text || '',
-      })) || [],
-      evidence: props.evidence || [],
-      suggestedFix: props.suggestedFix,
+      codePath: sanitizeSarifCodePath(rawCodePath),
+      evidence: sanitizeSarifEvidence(props.evidence),
+      suggestedFix: props.suggestedFix ? sanitizeSarifText(props.suggestedFix, 'suggestedFix') : undefined,
       createdAt: new Date().toISOString(),
       status: 'open',
     };
