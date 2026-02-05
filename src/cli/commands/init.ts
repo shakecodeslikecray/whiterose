@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { WhiteroseConfig, ProviderType, CodebaseUnderstanding } from '../../types.js';
 import { detectProvider, getProviderCommand } from '../../providers/detect.js';
@@ -243,6 +243,12 @@ export async function initCommand(options: InitOptions): Promise<void> {
   const writeSpinner = p.spinner();
   writeSpinner.start('Creating configuration...');
 
+  // Track whether .whiterose existed before (for rollback decisions)
+  const whiteroseExistedBefore = existsSync(whiterosePath);
+  // Save original .gitignore content for rollback
+  const gitignorePath = join(cwd, '.gitignore');
+  const originalGitignore = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf-8') : null;
+
   try {
     // Create directory structure
     mkdirSync(join(whiterosePath, 'cache'), { recursive: true });
@@ -274,39 +280,50 @@ export async function initCommand(options: InitOptions): Promise<void> {
       },
     };
 
-    // Write config.yml
-    writeFileSync(join(whiterosePath, 'config.yml'), YAML.stringify(config), 'utf-8');
-
-    // Write understanding cache
-    writeFileSync(
-      join(whiterosePath, 'cache', 'understanding.json'),
-      JSON.stringify(understanding, null, 2),
-      'utf-8'
-    );
-
-    // Generate and write intent.md
+    // Prepare all file contents before writing (fail fast on generation errors)
     const intentDoc = generateIntentDocument(understanding);
+    const configContent = YAML.stringify(config);
+    const understandingContent = JSON.stringify(understanding, null, 2);
+    const hashesContent = JSON.stringify({ version: '1', fileHashes: [], lastFullScan: null }, null, 2);
+
+    // Write all files atomically (all-or-nothing approach)
+    writeFileSync(join(whiterosePath, 'config.yml'), configContent, 'utf-8');
+    writeFileSync(join(whiterosePath, 'cache', 'understanding.json'), understandingContent, 'utf-8');
     writeFileSync(join(whiterosePath, 'intent.md'), intentDoc, 'utf-8');
+    writeFileSync(join(whiterosePath, 'cache', 'file-hashes.json'), hashesContent, 'utf-8');
 
-    // Initialize file hashes cache
-    writeFileSync(
-      join(whiterosePath, 'cache', 'file-hashes.json'),
-      JSON.stringify({ version: '1', fileHashes: [], lastFullScan: null }, null, 2),
-      'utf-8'
-    );
-
-    // Add to .gitignore if it exists
-    const gitignorePath = join(cwd, '.gitignore');
-    if (existsSync(gitignorePath)) {
-      const gitignore = await import('fs').then((fs) => fs.readFileSync(gitignorePath, 'utf-8'));
-      if (!gitignore.includes('.whiterose/cache')) {
-        writeFileSync(gitignorePath, gitignore + '\n# whiterose cache\n.whiterose/cache/\n', 'utf-8');
-      }
+    // Add to .gitignore if it exists and doesn't already have the entry
+    if (originalGitignore !== null && !originalGitignore.includes('.whiterose/cache')) {
+      writeFileSync(gitignorePath, originalGitignore + '\n# whiterose cache\n.whiterose/cache/\n', 'utf-8');
     }
 
     writeSpinner.stop('Configuration created');
   } catch (error) {
     writeSpinner.stop('Failed to create configuration');
+
+    // Rollback: clean up .whiterose if we created it
+    if (!whiteroseExistedBefore && existsSync(whiterosePath)) {
+      try {
+        rmSync(whiterosePath, { recursive: true, force: true });
+        p.log.info('Rolled back: removed .whiterose directory');
+      } catch {
+        // Ignore rollback errors
+      }
+    }
+
+    // Rollback: restore original .gitignore if we modified it
+    if (originalGitignore !== null && existsSync(gitignorePath)) {
+      try {
+        const currentGitignore = readFileSync(gitignorePath, 'utf-8');
+        if (currentGitignore !== originalGitignore) {
+          writeFileSync(gitignorePath, originalGitignore, 'utf-8');
+          p.log.info('Rolled back: restored .gitignore');
+        }
+      } catch {
+        // Ignore rollback errors
+      }
+    }
+
     p.log.error(String(error));
     process.exit(1);
   }

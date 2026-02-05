@@ -349,10 +349,16 @@ async function loadBugFromGitHub(issueUrl: string, cwd: string): Promise<Bug | n
       category = 'resource-leak';
     }
 
+    // SECURITY: Sanitize untrusted GitHub issue content to prevent prompt injection
+    // Issue title and body are external, low-privilege input that gets embedded
+    // in the agentic fix prompt, which runs with elevated write permissions
+    const sanitizedTitle = sanitizeSarifText(String(issue.title || ''), 'github.title');
+    const sanitizedBody = sanitizeSarifText(String(issue.body || ''), 'github.body');
+
     return {
       id: `GH-${issueNumber}`,
-      title: issue.title,
-      description: issue.body || issue.title,
+      title: sanitizedTitle,
+      description: sanitizedBody || sanitizedTitle,
       file: fileMatch?.[1] || '',
       line: parseInt(lineMatch?.[1] || '1', 10),
       kind: 'bug',
