@@ -202,86 +202,120 @@ async function runAgenticFix(
   const providerCommand = getProviderCommand(config.provider);
   const prompt = buildAgenticFixPrompt(bug);
 
-  // Different flags for different providers
-  const args: string[] = [];
-
-  if (config.provider === 'claude-code') {
-    // Claude Code: run in agentic mode with auto-accept for edits
-    // The --dangerously-skip-permissions flag allows edits without prompts
-    args.push('-p', prompt, '--dangerously-skip-permissions');
-  } else if (config.provider === 'gemini') {
-    // Gemini CLI: run in prompt mode, it will use tools automatically
-    args.push('-p', prompt);
-  } else if (config.provider === 'aider') {
-    // Aider: pass the message and file
-    args.push('--message', prompt, bug.file);
-  } else if (config.provider === 'codex') {
-    // Codex: use exec subcommand with stdin for prompt
-    // This is handled specially below
-  } else {
-    // Default: try -p flag
-    args.push('-p', prompt);
-  }
+  // Create an AbortController for reliable timeout handling
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
 
   // Run the provider
   let stdout = '';
   let stderr = '';
 
-  if (config.provider === 'codex') {
-    // Codex requires special handling: exec subcommand with stdin and temp file output
-    const tempDir = mkdtempSync(join(tmpdir(), 'whiterose-fix-'));
-    const outputFile = join(tempDir, 'output.txt');
+  try {
+    if (config.provider === 'codex') {
+      // Codex requires special handling: exec subcommand with stdin and temp file output
+      const tempDir = mkdtempSync(join(tmpdir(), 'whiterose-fix-'));
+      const outputFile = join(tempDir, 'output.txt');
 
-    try {
+      try {
+        const result = await execa(
+          providerCommand,
+          [
+            'exec',
+            '--full-auto', // Allow workspace writes without approval prompts
+            '--skip-git-repo-check',
+            '-C', projectDir, // Set working directory for codex
+            '-o', outputFile,
+            '-', // Read prompt from stdin
+          ],
+          {
+            cwd: projectDir,
+            input: prompt, // Pass prompt via stdin
+            timeout: 300000,
+            env: { ...process.env, NO_COLOR: '1' },
+            reject: false,
+            cancelSignal: controller.signal,
+          }
+        );
+
+        stderr = result.stderr || '';
+
+        // Read output from file if it exists, otherwise use stdout
+        if (existsSync(outputFile)) {
+          try {
+            stdout = readFileSync(outputFile, 'utf-8');
+          } catch {
+            stdout = result.stdout || '';
+          }
+        } else {
+          stdout = result.stdout || '';
+        }
+      } finally {
+        // Cleanup temp dir
+        try {
+          rmSync(tempDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    } else if (config.provider === 'claude-code') {
+      // Claude Code: pass prompt via stdin for reliability (avoids shell escaping and arg length issues)
+      // The --dangerously-skip-permissions flag allows edits without prompts
+      // When -p is used without a positional prompt argument, Claude Code reads from stdin
       const result = await execa(
         providerCommand,
-        [
-          'exec',
-          '--full-auto', // Allow workspace writes without approval prompts
-          '--skip-git-repo-check',
-          '-C', projectDir, // Set working directory for codex
-          '-o', outputFile,
-          '-', // Read prompt from stdin
-        ],
+        ['--dangerously-skip-permissions', '-p'],
         {
           cwd: projectDir,
-          input: prompt, // Pass prompt via stdin
+          input: prompt, // Pass prompt via stdin (Claude reads from stdin when no prompt arg provided)
           timeout: 300000,
           env: { ...process.env, NO_COLOR: '1' },
           reject: false,
+          cancelSignal: controller.signal,
         }
       );
-
+      stdout = result.stdout || '';
       stderr = result.stderr || '';
-
-      // Read output from file if it exists, otherwise use stdout
-      if (existsSync(outputFile)) {
-        try {
-          stdout = readFileSync(outputFile, 'utf-8');
-        } catch {
-          stdout = result.stdout || '';
-        }
-      } else {
-        stdout = result.stdout || '';
-      }
-    } finally {
-      // Cleanup temp dir
-      try {
-        rmSync(tempDir, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
+    } else if (config.provider === 'gemini') {
+      // Gemini CLI: run in prompt mode, it will use tools automatically
+      // Pass prompt as positional argument (Gemini may not support stdin)
+      const result = await execa(providerCommand, ['-p', prompt], {
+        cwd: projectDir,
+        timeout: 300000,
+        env: { ...process.env, NO_COLOR: '1' },
+        reject: false,
+        stdin: 'ignore', // Prevent stdin hangs
+        cancelSignal: controller.signal,
+      });
+      stdout = result.stdout || '';
+      stderr = result.stderr || '';
+    } else if (config.provider === 'aider') {
+      // Aider: pass the message and file
+      // Aider doesn't support stdin for prompt, use --message flag
+      const result = await execa(providerCommand, ['--message', prompt, bug.file], {
+        cwd: projectDir,
+        timeout: 300000,
+        env: { ...process.env, NO_COLOR: '1' },
+        reject: false,
+        stdin: 'ignore', // Prevent stdin hangs
+        cancelSignal: controller.signal,
+      });
+      stdout = result.stdout || '';
+      stderr = result.stderr || '';
+    } else {
+      // Default: pass prompt as argument with -p flag, ignore stdin to prevent hangs
+      const result = await execa(providerCommand, ['-p', prompt], {
+        cwd: projectDir,
+        timeout: 300000,
+        env: { ...process.env, NO_COLOR: '1' },
+        reject: false,
+        stdin: 'ignore', // Prevent stdin hangs
+        cancelSignal: controller.signal,
+      });
+      stdout = result.stdout || '';
+      stderr = result.stderr || '';
     }
-  } else {
-    // Standard execution for other providers
-    const result = await execa(providerCommand, args, {
-      cwd: projectDir,
-      timeout: 300000, // 5 minute timeout for agentic operations
-      env: { ...process.env, NO_COLOR: '1' },
-      reject: false, // Don't throw on non-zero exit
-    });
-    stdout = result.stdout || '';
-    stderr = result.stderr || '';
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   // Check for known error patterns (only for actual ENOENT errors, not content)
