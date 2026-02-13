@@ -11,6 +11,7 @@
 
 import { PassConfig } from '../../core/multipass-scanner.js';
 import { getCategoryFocusedPatterns } from './cwe-patterns.js';
+import type { CustomPassConfig } from '../../types.js';
 
 export interface StaticFinding {
   tool: string;
@@ -260,6 +261,76 @@ Respond with JSON:
   "technicalDetails": "Original technical description"
 }
 </json>`;
+}
+
+/**
+ * Build a prompt for a custom domain-specific pass from RiskProfile.
+ * Uses the same output format as standard passes.
+ */
+export function buildCustomPassPrompt(customPass: CustomPassConfig, ctx: PassPromptContext): string {
+  const { projectType, framework, language, totalFiles } = ctx;
+
+  const staticSection = ctx.staticFindings?.length
+    ? `
+## STATIC ANALYSIS SIGNALS
+${ctx.staticFindings.slice(0, 15).map(f => `- ${f.tool}: ${f.file}:${f.line} - ${f.message}`).join('\n')}
+`
+    : '';
+
+  return `You are a security specialist performing a TARGETED analysis: ${customPass.id.toUpperCase()}.
+
+## YOUR SINGLE MISSION
+${customPass.description}
+
+## PROJECT CONTEXT
+- Type: ${projectType}
+- Framework: ${framework || 'Unknown'}
+- Language: ${language}
+- Size: ${totalFiles} files
+${staticSection}
+## METHODOLOGY
+
+1. Search the codebase for patterns relevant to: ${customPass.category}
+2. Read files that match and analyze for the specific issues described above
+3. Trace data flow to confirm the issue is real
+4. Report all confirmed and suspected issues
+
+## REPORTING FORMAT
+
+When you find an issue:
+
+<json>
+{
+  "type": "bug",
+  "data": {
+    "file": "src/path/to/file.ts",
+    "line": 42,
+    "endLine": 45,
+    "title": "Short description of the issue",
+    "description": "Explanation of why this is problematic and potential impact.",
+    "kind": "bug|smell",
+    "category": "${customPass.category}",
+    "severity": "critical|high|medium|low",
+    "confidence": "high|medium|low",
+    "evidence": [
+      "Evidence point 1",
+      "Evidence point 2"
+    ],
+    "suggestedFix": "Optional: how to fix it"
+  }
+}
+</json>
+
+Progress updates:
+###SCANNING:path/to/file.ts
+
+When done:
+###COMPLETE
+
+## BEGIN
+
+Search for ${customPass.id} patterns. Read files that match. Report issues as you find them.
+This is a TARGETED pass - focus exclusively on: ${customPass.description}`;
 }
 
 /**

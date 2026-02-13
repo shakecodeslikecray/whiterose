@@ -11,6 +11,7 @@ import { refreshCommand } from './commands/refresh.js';
 import { statusCommand } from './commands/status.js';
 import { reportCommand } from './commands/report.js';
 import { clearCommand } from './commands/clear.js';
+import { profileCommand } from './commands/profile.js';
 import { detectProvider } from '../providers/detect.js';
 import { ProviderType } from '../types.js';
 
@@ -125,6 +126,15 @@ program
   .description('Clear accumulated bug list (start fresh)')
   .option('--force', 'Skip confirmation prompt')
   .action(clearCommand);
+
+// ─────────────────────────────────────────────────────────────
+// profile - Generate risk profile for targeted scanning
+// ─────────────────────────────────────────────────────────────
+program
+  .command('profile')
+  .description('Generate risk profile for targeted scanning')
+  .option('--json', 'Output as JSON')
+  .action(profileCommand);
 
 // ─────────────────────────────────────────────────────────────
 // Auto-run: Minimal questions, maximum action

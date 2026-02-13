@@ -8,9 +8,9 @@
  * batching, deduplication, and merging logic.
  */
 
-import { Bug, CodebaseUnderstanding, WhiteroseConfig, BugCategory, BugSeverity, ConfidenceLevel, CodePathStep, FeatureIntent, BehavioralContract } from '../types.js';
+import { Bug, CodebaseUnderstanding, WhiteroseConfig, BugCategory, BugSeverity, ConfidenceLevel, CodePathStep, FeatureIntent, BehavioralContract, RiskProfile, CustomPassConfig } from '../types.js';
 import { getFullAnalysisPipeline } from '../providers/prompts/flow-analysis-prompts.js';
-import { buildPassPrompt } from '../providers/prompts/multipass-prompts.js';
+import { buildPassPrompt, buildCustomPassPrompt } from '../providers/prompts/multipass-prompts.js';
 import { buildFlowAnalysisPrompt } from '../providers/prompts/flow-analysis-prompts.js';
 import { buildUnderstandingPrompt } from '../providers/prompts/understanding.js';
 import { getPassConfig } from './multipass-scanner.js';
@@ -70,6 +70,7 @@ export interface ScanContext {
   understanding: CodebaseUnderstanding;
   staticResults: StaticFinding[];
   config?: WhiteroseConfig;
+  riskProfile?: RiskProfile;
 }
 
 export interface ScanProgress {
@@ -135,14 +136,33 @@ export class CoreScanner {
 
     // Get all passes from the pipeline
     const pipeline = getFullAnalysisPipeline();
-    const unitPasses = pipeline[0].passes;
-    const integrationPasses = pipeline[1].passes;
-    const e2ePasses = pipeline[2].passes;
-    const totalPasses = unitPasses.length + integrationPasses.length + e2ePasses.length;
+    let unitPasses = pipeline[0].passes;
+    let integrationPasses = pipeline[1].passes;
+    let e2ePasses = pipeline[2].passes;
+
+    // Risk profile: filter skipped passes and collect custom passes
+    const rp = context.riskProfile;
+    const skippedNames = new Set(rp?.skippedPasses.map(s => s.passName) || []);
+    const customUnitPasses = rp?.customPasses.filter(p => p.phase === 'unit') || [];
+    const customIntegrationPasses = rp?.customPasses.filter(p => p.phase === 'integration') || [];
+    const customE2EPasses = rp?.customPasses.filter(p => p.phase === 'e2e') || [];
+
+    if (skippedNames.size > 0) {
+      unitPasses = unitPasses.filter(p => !skippedNames.has(p));
+      integrationPasses = integrationPasses.filter(p => !skippedNames.has(p));
+      e2ePasses = e2ePasses.filter(p => !skippedNames.has(p));
+    }
+
+    const totalStandard = unitPasses.length + integrationPasses.length + e2ePasses.length;
+    const totalCustom = customUnitPasses.length + customIntegrationPasses.length + customE2EPasses.length;
+    const totalPasses = totalStandard + totalCustom;
 
     this.report(`\n════ CORE SCANNER (PIPELINE MODE) ════`);
     this.report(`  Provider: ${this.executor.name}`);
-    this.report(`  Passes: ${totalPasses} (${unitPasses.length} unit → ${integrationPasses.length} integration → ${e2ePasses.length} E2E)`);
+    this.report(`  Passes: ${totalPasses} (${unitPasses.length + customUnitPasses.length} unit → ${integrationPasses.length + customIntegrationPasses.length} integration → ${e2ePasses.length + customE2EPasses.length} E2E)`);
+    if (totalCustom > 0) {
+      this.report(`  Risk profile: ${totalCustom} custom passes, ${skippedNames.size} skipped`);
+    }
     this.report(`  Findings flow: Unit → Integration → E2E`);
 
     let globalBugIndex = 0;
@@ -154,10 +174,17 @@ export class CoreScanner {
     this.report(`\n════ PHASE 1: UNIT ANALYSIS ════`);
     this.report(`  Looking for: injection, null refs, auth bypass, etc.`);
 
-    const unitJobs = this.buildUnitPassJobs(context, unitPasses);
-    const unitFindings = await this.runPassBatch(unitJobs, cwd, context.files, globalBugIndex);
-    globalBugIndex += unitFindings.length;
+    // Custom unit passes run BEFORE standard unit passes
+    const customUnitJobs = this.buildCustomPassJobs(context, customUnitPasses);
+    const customUnitFindings = await this.runPassBatch(customUnitJobs, cwd, context.files, globalBugIndex);
+    this.boostCustomPassConfidence(customUnitFindings);
+    globalBugIndex += customUnitFindings.length;
 
+    const unitJobs = this.buildUnitPassJobs(context, unitPasses);
+    const standardUnitFindings = await this.runPassBatch(unitJobs, cwd, context.files, globalBugIndex);
+    globalBugIndex += standardUnitFindings.length;
+
+    const unitFindings = [...customUnitFindings, ...standardUnitFindings];
     this.report(`  Phase 1 complete: ${unitFindings.length} findings`);
 
     // ═══════════════════════════════════════════════════════════
@@ -168,10 +195,17 @@ export class CoreScanner {
     this.report(`  Building on ${unitFindings.length} unit findings`);
     this.report(`  Looking for: auth flows, data flows, trust boundaries`);
 
-    const integrationJobs = this.buildIntegrationPassJobs(context, integrationPasses, unitFindings);
-    const integrationFindings = await this.runPassBatch(integrationJobs, cwd, context.files, globalBugIndex);
-    globalBugIndex += integrationFindings.length;
+    // Custom integration passes run BEFORE standard integration passes
+    const customIntJobs = this.buildCustomPassJobs(context, customIntegrationPasses);
+    const customIntFindings = await this.runPassBatch(customIntJobs, cwd, context.files, globalBugIndex);
+    this.boostCustomPassConfidence(customIntFindings);
+    globalBugIndex += customIntFindings.length;
 
+    const integrationJobs = this.buildIntegrationPassJobs(context, integrationPasses, unitFindings);
+    const standardIntFindings = await this.runPassBatch(integrationJobs, cwd, context.files, globalBugIndex);
+    globalBugIndex += standardIntFindings.length;
+
+    const integrationFindings = [...customIntFindings, ...standardIntFindings];
     this.report(`  Phase 2 complete: ${integrationFindings.length} findings`);
 
     // ═══════════════════════════════════════════════════════════
@@ -182,10 +216,17 @@ export class CoreScanner {
     this.report(`  Building on ${unitFindings.length} unit + ${integrationFindings.length} integration findings`);
     this.report(`  Looking for: attack chains, privilege escalation, session bugs`);
 
+    // Custom e2e passes run BEFORE standard e2e passes
+    const customE2EJobs = this.buildCustomPassJobs(context, customE2EPasses);
+    const customE2EFindings = await this.runPassBatch(customE2EJobs, cwd, context.files, globalBugIndex);
+    this.boostCustomPassConfidence(customE2EFindings);
+    globalBugIndex += customE2EFindings.length;
+
     const allPreviousFindings = [...unitFindings, ...integrationFindings];
     const e2eJobs = this.buildE2EPassJobs(context, e2ePasses, allPreviousFindings);
-    const e2eFindings = await this.runPassBatch(e2eJobs, cwd, context.files, globalBugIndex);
+    const standardE2EFindings = await this.runPassBatch(e2eJobs, cwd, context.files, globalBugIndex);
 
+    const e2eFindings = [...customE2EFindings, ...standardE2EFindings];
     this.report(`  Phase 3 complete: ${e2eFindings.length} findings`);
 
     // ═══════════════════════════════════════════════════════════
@@ -580,6 +621,44 @@ export class CoreScanner {
     }
 
     return jobs;
+  }
+
+  /**
+   * Build custom pass jobs from risk profile
+   */
+  private buildCustomPassJobs(
+    context: ScanContext,
+    customPasses: CustomPassConfig[]
+  ): Array<{ name: string; prompt: string }> {
+    const jobs: Array<{ name: string; prompt: string }> = [];
+    const { understanding, staticResults } = context;
+
+    for (const customPass of customPasses) {
+      jobs.push({
+        name: customPass.id,
+        prompt: buildCustomPassPrompt(customPass, {
+          pass: { name: customPass.id, category: customPass.category as any, description: customPass.description, searchPatterns: [], grepPatterns: [], methodology: '', falsePositiveHints: [] },
+          projectType: understanding.summary.type,
+          framework: understanding.summary.framework || '',
+          language: understanding.summary.language,
+          totalFiles: understanding.structure.totalFiles,
+          staticFindings: staticResults,
+        }),
+      });
+    }
+
+    return jobs;
+  }
+
+  /**
+   * Boost confidence for custom pass findings (targeted = higher signal-to-noise)
+   */
+  private boostCustomPassConfidence(bugs: Bug[]): void {
+    for (const bug of bugs) {
+      if (bug.confidence.overall === 'medium') {
+        bug.confidence.overall = 'high';
+      }
+    }
   }
 
   private buildQuickScanPrompt(context: ScanContext): string {

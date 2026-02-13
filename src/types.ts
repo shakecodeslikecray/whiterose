@@ -228,6 +228,51 @@ export const CodebaseUnderstanding = z.object({
 export type CodebaseUnderstanding = z.infer<typeof CodebaseUnderstanding>;
 
 // ─────────────────────────────────────────────────────────────
+// Risk Profile Types
+// ─────────────────────────────────────────────────────────────
+
+// Extensible domain type - not limited to a fixed enum.
+// The risk profiler detects these from code patterns, dependencies, and project structure.
+export const DomainType = z.string();
+export type DomainType = z.infer<typeof DomainType>;
+
+export const RiskLevel = z.enum(['critical', 'high', 'medium']);
+export type RiskLevel = z.infer<typeof RiskLevel>;
+
+export const HotPath = z.object({
+  file: z.string(),
+  reason: z.string(),
+  riskLevel: RiskLevel,
+});
+export type HotPath = z.infer<typeof HotPath>;
+
+export const CustomPassConfig = z.object({
+  id: z.string(),
+  phase: z.enum(['unit', 'integration', 'e2e']),
+  category: z.string(),
+  description: z.string(),
+});
+export type CustomPassConfig = z.infer<typeof CustomPassConfig>;
+
+export const SkipReason = z.object({
+  passName: z.string(),
+  reason: z.string(),
+});
+export type SkipReason = z.infer<typeof SkipReason>;
+
+export const RiskProfile = z.object({
+  version: z.string(),
+  generatedAt: z.string().datetime(),
+  domains: z.array(DomainType),
+  sensitiveDataTypes: z.array(z.string()),
+  externalDependencies: z.array(z.string()),
+  hotPaths: z.array(HotPath),
+  customPasses: z.array(CustomPassConfig),
+  skippedPasses: z.array(SkipReason),
+});
+export type RiskProfile = z.infer<typeof RiskProfile>;
+
+// ─────────────────────────────────────────────────────────────
 // Cache Types
 // ─────────────────────────────────────────────────────────────
 

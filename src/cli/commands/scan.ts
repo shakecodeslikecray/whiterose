@@ -3,7 +3,8 @@ import chalk from 'chalk';
 import { existsSync, writeFileSync, readFileSync } from 'fs';
 import { join, relative, basename, isAbsolute } from 'path';
 import fg from 'fast-glob';
-import { WhiteroseConfig, ScanResult, Bug, ConfidenceLevel, ProviderType, ScanMeta, ScanSummary } from '../../types.js';
+import { WhiteroseConfig, ScanResult, Bug, ConfidenceLevel, ProviderType, ScanMeta, ScanSummary, RiskProfile as RiskProfileSchema } from '../../types.js';
+import type { RiskProfile } from '../../types.js';
 import { loadConfig, loadUnderstanding } from '../../core/config.js';
 import { CoreScanner } from '../../core/scanner.js';
 import { getExecutor } from '../../providers/executors/index.js';
@@ -206,6 +207,30 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Load risk profile (optional)
+  // ─────────────────────────────────────────────────────────────
+  let riskProfile: RiskProfile | undefined;
+  if (!isQuickScan) {
+    const riskProfilePath = join(whiterosePath, 'risk-profile.json');
+    if (existsSync(riskProfilePath)) {
+      try {
+        const rpContent = JSON.parse(readFileSync(riskProfilePath, 'utf-8'));
+        const rpResult = RiskProfileSchema.safeParse(rpContent);
+        if (rpResult.success) {
+          riskProfile = rpResult.data;
+          if (!isQuiet) {
+            const customCount = riskProfile.customPasses.length;
+            const skipCount = riskProfile.skippedPasses.length;
+            console.log(chalk.dim('\u2502') + ` Risk profile: ${chalk.cyan(customCount)} custom passes, ${chalk.cyan(skipCount)} skipped`);
+          }
+        }
+      } catch {
+        // Non-fatal: continue without risk profile
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Run static analysis
   // ─────────────────────────────────────────────────────────────
   let staticResults;
@@ -280,6 +305,7 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
           understanding,
           staticResults: staticResults || [],
           config,
+          riskProfile,
         });
       }
 
@@ -318,6 +344,7 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
         understanding,
         staticResults: staticResults || [],
         config,
+        riskProfile,
       });
     }
 
