@@ -46,6 +46,7 @@ function line(char: string, width: number): string {
 
 function padRight(str: string, width: number): string {
   // Strip ANSI codes for length calculation
+  // eslint-disable-next-line no-control-regex
   const stripped = str.replace(/\u001b\[\d+(;\d+)*m/g, '');
   const padding = Math.max(0, width - stripped.length);
   return str + ' '.repeat(padding);

@@ -18,7 +18,6 @@ import { mergeBugs } from '../../core/bug-merger.js';
 import { analyzeCrossFile } from '../../core/cross-file-analyzer.js';
 import { analyzeContracts } from '../../core/contract-analyzer.js';
 import { analyzeIntentContracts, classifyFindings } from '../../core/findings.js';
-import { formatDuration } from '../components/progress.js';
 import { renderScanCard, CardData } from '../components/card.js';
 
 interface ScanOptions {
@@ -233,11 +232,10 @@ export async function scanCommand(paths: string[], options: ScanOptions): Promis
   // ─────────────────────────────────────────────────────────────
   // Run static analysis
   // ─────────────────────────────────────────────────────────────
-  let staticResults;
   if (!isQuiet) {
     console.log(chalk.dim('\u2502') + ' Running static analysis (tsc, eslint)...');
   }
-  staticResults = await runStaticAnalysis(cwd, filesToScan, config);
+  const staticResults = await runStaticAnalysis(cwd, filesToScan, config);
   if (!isQuiet) {
     console.log(chalk.dim('\u2502') + ` Static analysis: ${chalk.cyan(staticResults.length)} signals`);
   }

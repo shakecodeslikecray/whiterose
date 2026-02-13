@@ -1,13 +1,13 @@
 import * as p from '@clack/prompts';
 import chalk from 'chalk';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
 import { loadConfig, loadUnderstanding } from '../../core/config.js';
 import { detectProvider } from '../../providers/detect.js';
 import { getAccumulatedBugsStats } from '../../core/bug-merger.js';
 import { ScanResult } from '../../types.js';
 import { renderScanCard, renderStatusCard, CardData } from '../components/card.js';
-import { formatDuration } from '../components/progress.js';
+
 
 /**
  * Get repository name from git or directory name
